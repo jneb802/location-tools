@@ -161,6 +161,8 @@ public class LocationToolsWindow : EditorWindow
         EditorGUILayout.Space(1f);
         DoImportGUI();
         EditorGUILayout.Space(1f);
+        DoExportGUI();
+        EditorGUILayout.Space(1f);
         DoSelectionGUI();
         EditorGUILayout.Space(1f);
         DoSMCUI();
@@ -383,6 +385,111 @@ public class LocationToolsWindow : EditorWindow
             Debug.LogWarning("Import was unable to find: " + string.Join(", ", notFound.Select(i => i.Value.ToString() + "x " + i.Key)));
         }
     }
+    
+    private void ExportObjects()
+    {
+        if (exportTarget == null)
+        {
+            Debug.LogError("No export target set.");
+            return;
+        }
+
+        // Always export as .blueprint
+        var defaultName = (exportTarget != null ? exportTarget.name : "Blueprint") + ".blueprint";
+        var defaultDir = exportSettings != null && exportSettings.Count > 0 && !string.IsNullOrEmpty(exportSettings[0])
+            ? exportSettings[0]
+            : "Assets/";
+        var path = EditorUtility.SaveFilePanel("Export Blueprint", defaultDir, defaultName, "blueprint");
+        if (string.IsNullOrEmpty(path)) return;
+
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var lines = new List<string>();
+
+        // ---- Header (match example format) ----
+        lines.Add($"#Name:{exportTarget.name}");
+        lines.Add("#Creator:LocationTools");
+        lines.Add("#Description:");
+        lines.Add("#Category:LocationTools");
+        lines.Add($"#Center:{exportTarget.name}");
+        var c = exportTarget.transform.position;
+        lines.Add($"#Coordinates:{c.x.ToString(inv)},{c.y.ToString(inv)},{c.z.ToString(inv)}");
+        lines.Add("#Rotation:0,0,0");
+        lines.Add("#SnapPoints"); // none for now
+        lines.Add("#Pieces");
+
+        // ---- One layer deep: only direct children of exportTarget ----
+        for (int i = 0; i < exportTarget.transform.childCount; i++)
+        {
+            var t = exportTarget.transform.GetChild(i);
+            if (t == null) continue;
+
+            // Resolve prefab name (prefer source prefab asset name; fallback to GameObject name)
+            GameObject sourcePrefab = null;
+            try
+            {
+    #if UNITY_2018_3_OR_NEWER
+                sourcePrefab = PrefabUtility.GetCorrespondingObjectFromSource(t.gameObject);
+    #else
+                sourcePrefab = PrefabUtility.GetPrefabParent(t.gameObject) as GameObject;
+    #endif
+            }
+            catch { /* ignore */ }
+
+            var prefabName = (sourcePrefab != null ? sourcePrefab.name : t.gameObject.name);
+
+            var p = t.position;
+            var r = t.rotation;
+            var s = t.localScale;
+
+            // Example .blueprint row format:
+            // name;;posX;posY;posZ;rotX;rotY;rotZ;rotW;;scaleX;scaleY;scaleZ;[optional blob]
+            // We'll omit the optional trailing blob but keep the ending semicolon.
+            lines.Add(string.Join(";",
+                prefabName,
+                "", // empty 'type' field -> produces the double semicolon after name
+                p.x.ToString(inv),
+                p.y.ToString(inv),
+                p.z.ToString(inv),
+                r.x.ToString(inv),
+                r.y.ToString(inv),
+                r.z.ToString(inv),
+                r.w.ToString(inv),
+                "", // empty field to create the second double-semicolon block
+                s.x.ToString(inv),
+                s.y.ToString(inv),
+                s.z.ToString(inv)
+            ) + ";");
+        }
+
+        // Write file and refresh AssetDatabase
+        try
+        {
+            File.WriteAllLines(path, lines);
+            Debug.Log($"Exported {exportTarget.transform.childCount} objects (one layer) to: {path}");
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"Failed to write blueprint: {e.Message}");
+            return;
+        }
+
+        AssetDatabase.Refresh();
+
+        // If saved inside the project, ping/select it
+        var projectPath = Application.dataPath.Replace("/Assets", "");
+        if (path.StartsWith(projectPath))
+        {
+            var assetPath = "Assets" + path.Substring(projectPath.Length).Replace('\\', '/');
+            var obj = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
+            if (obj != null)
+            {
+                EditorGUIUtility.PingObject(obj);
+                Selection.activeObject = obj;
+            }
+        }
+    }
+
+
 
     #endregion
 
@@ -390,11 +497,18 @@ public class LocationToolsWindow : EditorWindow
 
     private static string defaultImportPath = "Assets/PrefabInstance/";
     private ReorderableList importSettingsList = null;
+    
+    private ReorderableList exportSettingsList = null;
     // private SerializedObject importSettings;
     private List<string> importSettings = new List<string>() { defaultImportPath };
 
+    private List<string> exportSettings = new List<string>() { defaultImportPath };
+    
     private bool showImports = true;
+    
+    private bool showExports = true;
     private bool showImportSettings = false;
+    private bool showExportSettings = false;
     private TextAsset blueprintAsset;
     private int blueprintPrefabCount = 0;
     List<string> blueprintsList = new List<string>();
@@ -402,6 +516,8 @@ public class LocationToolsWindow : EditorWindow
     List<BlueprintPrefab> structuresList = new List<BlueprintPrefab>();
     private bool maintainPrefabConnections = false;
     private GameObject importTarget;
+    
+    private GameObject exportTarget;
 
     #endregion
 
@@ -537,6 +653,55 @@ public class LocationToolsWindow : EditorWindow
 
 
 
+            EditorGUILayout.Space(18);
+            EditorGUILayout.EndVertical();
+        }
+    }
+    
+    private void DoExportGUI()
+    {
+        // Toolbar
+        GUILayout.BeginHorizontal(EditorStyles.toolbar);
+        showExports = EditorGUILayout.Foldout(showExports, "Export", true, foldoutBoldStyle);
+        GUILayout.EndHorizontal();
+
+        if (showExports)
+        {
+            EditorGUILayout.BeginVertical();
+            EditorGUILayout.Space();
+
+            // Export Target
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField("Export Target", GUILayout.MaxWidth(125f));
+            exportTarget = (GameObject)EditorGUILayout.ObjectField(exportTarget, typeof(GameObject), true);
+            EditorGUILayout.EndHorizontal();
+
+            // Buttons (Export)
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.Space(2f);
+            if (GUILayout.Button("Export", EditorStyles.miniButtonLeft))
+            {
+                ExportObjects();
+            }
+            // Buttons (Reset)
+            if (GUILayout.Button("Reset", EditorStyles.miniButtonRight))
+            {
+                ClearParse();
+                exportTarget = (GameObject)EditorGUILayout.ObjectField(null, typeof(GameObject), true);
+                Repaint();
+            }
+            EditorGUILayout.Space(2f);
+            EditorGUILayout.EndHorizontal();
+            EditorGUILayout.Space(10);
+
+            // Export Settings folder and list
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField(" ", GUILayout.MaxWidth(125f)); // spacer
+            showExportSettings = EditorGUILayout.Foldout(showExportSettings, "Export path settings", true);
+            
+            EditorGUILayout.LabelField(" ", GUILayout.MaxWidth(6f)); // spacer
+            EditorGUILayout.EndHorizontal();
+            
             EditorGUILayout.Space(18);
             EditorGUILayout.EndVertical();
         }
