@@ -243,11 +243,13 @@ public class LocationToolsWindow : EditorWindow
         return float.Parse(text, System.Globalization.CultureInfo.InvariantCulture);
     }
 
-    private GameObject FindPrefab(BlueprintPrefab blueprintPrefab)
-    { 
+	private GameObject FindPrefab(BlueprintPrefab blueprintPrefab)
+    {
         if (cachedPrefabs.Count > 0)
         {
-            GameObject foundOne = cachedPrefabs.Find(x => x.name.Equals(blueprintPrefab.prefabName, StringComparison.OrdinalIgnoreCase));
+            GameObject foundOne = cachedPrefabs.Find(x => 
+                x != null && 
+                x.name.Equals(blueprintPrefab.prefabName, StringComparison.OrdinalIgnoreCase));
             if (foundOne != null)
                 return foundOne;
         }
@@ -256,6 +258,11 @@ public class LocationToolsWindow : EditorWindow
         foreach (string guid in guids)
         {
             string path = AssetDatabase.GUIDToAssetPath(guid);
+
+            //  Skip any prefab under a "_res" folder because these prefabs are just no-material (i.e. white) prefabs
+            if (path.Contains("/_res/", StringComparison.OrdinalIgnoreCase))
+                continue;
+
             GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
 
             if (prefab != null && prefab.name.Equals(blueprintPrefab.prefabName, StringComparison.OrdinalIgnoreCase))
@@ -267,7 +274,6 @@ public class LocationToolsWindow : EditorWindow
 
         return null;
     }
-
 
     private void GenerateStructureList()
     {
