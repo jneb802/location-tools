@@ -244,43 +244,30 @@ public class LocationToolsWindow : EditorWindow
     }
 
     private GameObject FindPrefab(BlueprintPrefab blueprintPrefab)
-    {
+    { 
         if (cachedPrefabs.Count > 0)
         {
-            GameObject foundOne = cachedPrefabs.Find((x) => x.name == blueprintPrefab.prefabName);
+            GameObject foundOne = cachedPrefabs.Find(x => x.name.Equals(blueprintPrefab.prefabName, StringComparison.OrdinalIgnoreCase));
             if (foundOne != null)
-            {
                 return foundOne;
-            }
         }
 
-        // GameObject prefab = (GameObject)AssetDatabase.LoadAssetAtPath("Assets/PrefabInstance/" + blueprintPrefab.prefabName + ".prefab", typeof(GameObject));
-        int index = 0;
-        string path = importSettings.Count > index ? importSettings[index] : null;
-        bool searching = importSettings.Count > index && !string.IsNullOrEmpty(path);
-        GameObject prefab = null; 
-        while (prefab == null && searching) {
-            prefab = (GameObject)AssetDatabase.LoadAssetAtPath(path + blueprintPrefab.prefabName + ".prefab", typeof(GameObject));
+        string[] guids = AssetDatabase.FindAssets(blueprintPrefab.prefabName + " t:Prefab");
+        foreach (string guid in guids)
+        {
+            string path = AssetDatabase.GUIDToAssetPath(guid);
+            GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
 
-            if (prefab != null)
+            if (prefab != null && prefab.name.Equals(blueprintPrefab.prefabName, StringComparison.OrdinalIgnoreCase))
             {
                 cachedPrefabs.Add(prefab);
                 return prefab;
             }
+        }
 
-            index++;
-            path = importSettings.Count > index ? importSettings[index] : null;
-            searching = importSettings.Count > index && !string.IsNullOrEmpty(path);
-            if (index > 50) // assuming no ones ever gonna put 50 search paths in here.
-                break;
-        }
-        if (prefab != null)
-        {
-            cachedPrefabs.Add(prefab);
-            return prefab;
-        }
         return null;
     }
+
 
     private void GenerateStructureList()
     {
