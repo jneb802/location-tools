@@ -1,19 +1,12 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Reflection;
 
 #if UNITY_EDITOR
 using UnityEditor;
 using UnityEditor.AssetImporters;
-using UnityEditor.IMGUI.Controls;
-using UnityEditor.SceneManagement;
-using UnityEditor.Experimental.SceneManagement;
-using UnityEditorInternal;
 using UnityEngine;
-using UnityEngine.SceneManagement;
 
 
 #region Blueprint & LocationTool helpers
@@ -49,33 +42,6 @@ public static class LocationToolExtensionMethods
             StringSplitOptions.None
         ));
     }
-
-    public static bool HasComponent(this GameObject go, Type type)
-    {
-        var comp = go.GetComponent(type);
-        return comp != null;
-    }
-
-
-    private static MethodInfo moveImpl = null;
-    public static bool MoveToGameObject(this Component c, GameObject go)
-    {
-        if (moveImpl == null)
-        {
-            moveImpl = typeof(ComponentUtility).GetMethod(
-                "MoveComponentToGameObject",
-                BindingFlags.NonPublic | BindingFlags.Static,
-                Type.DefaultBinder,
-                new[] { typeof(Component), typeof(GameObject) },
-                null);
-        }
-        if (moveImpl != null)
-        {
-            return (bool)moveImpl.Invoke(null, new object[] { c, go });
-        }
-
-        return false;
-    }
 }
 
 [Serializable]
@@ -101,9 +67,6 @@ public class LocationToolsWindow : EditorWindow
 {
     private GUIStyle foldoutBoldStyle = null;
     private GUIStyle greyLabelStyle = null;
-    private double renameTime;
-
-    private Type smcType = null;
 
     [SerializeField]
     private Vector2 m_ScrollPosition;
@@ -128,31 +91,21 @@ public class LocationToolsWindow : EditorWindow
 
     void OnEnable()
     {
-        // Selections
-        Selection.selectionChanged += OnSelectionChanged;
-        EditorApplication.hierarchyChanged += OnHierarchyChanged;
-        EditorSceneManager.sceneOpened += OnSceneOpened;
-        PrefabStage.prefabStageOpened += OnStageChanged;
-        PrefabStage.prefabStageClosing += OnStageChanged;
-
-        smcType = Type.GetType("SimpleMeshCombine, assembly_simplemeshcombine, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null");
-
-        DoEnableList();
-        RefreshComponentTypes();
-        RefreshSelectedComponentTypes();
+        // Nothing to initialize currently
     }
 
     // Called when the instance is destroyed or before a domain reload.
     void OnDisable()
     {
-        // Selections
-        Selection.selectionChanged -= OnSelectionChanged;
-        EditorApplication.hierarchyChanged -= OnHierarchyChanged;
-        EditorSceneManager.sceneOpened -= OnSceneOpened;
-        PrefabStage.prefabStageOpened -= OnStageChanged;
-        PrefabStage.prefabStageClosing -= OnStageChanged;
+        // Clean up stability visuals
+        ClearStabilityVisuals();
 
-        DoDisableList();
+        // Destroy highlight material
+        if (highlightMaterial != null)
+        {
+            DestroyImmediate(highlightMaterial);
+            highlightMaterial = null;
+        }
     }
 
     void OnGUI()
@@ -163,18 +116,7 @@ public class LocationToolsWindow : EditorWindow
         EditorGUILayout.Space(1f);
         DoExportGUI();
         EditorGUILayout.Space(1f);
-        DoSelectionGUI();
-        EditorGUILayout.Space(1f);
-        DoSMCUI();
-        EditorGUILayout.Space(1f);
-        DoGroupGUI();
-        EditorGUILayout.Space(1f);
-        DoStripGUI();
-        EditorGUILayout.Space(1f);
-        DoCombinerGUI();
-        // EditorGUILayout.Space(1f);
-        // DoMiscGUI();
-
+        DoStabilityGUI();
 
         GUILayout.FlexibleSpace();
         GUILayout.BeginHorizontal();
@@ -182,41 +124,7 @@ public class LocationToolsWindow : EditorWindow
         EditorGUILayout.LabelField("Made with Love by Balrond & probablykory", greyLabelStyle);
         GUILayout.EndHorizontal();
         EditorGUILayout.EndScrollView();
-
-        selectionChanged = false;
     }
-
-    private void EngageRenameMode()
-    {
-        if (EditorApplication.timeSinceStartup >= renameTime)
-        {
-            EditorApplication.update -= EngageRenameMode;
-            EditorApplication.ExecuteMenuItem("Window/General/Hierarchy");
-            EditorApplication.ExecuteMenuItem("Edit/Rename");
-        }
-    }
-
-    #region Shared
-    private void OnSceneOpened(Scene scene, OpenSceneMode mode)
-    {
-        RefreshComponentTypes();
-    }
-
-    private void OnStageChanged(PrefabStage stage)
-    {
-        RefreshComponentTypes();
-    }
-
-    private Scene GetCurrentScene()
-    {
-        var stage = PrefabStageUtility.GetCurrentPrefabStage();
-        if (stage != null && stage.scene != null) {
-            return stage.scene;
-        }
-        return EditorSceneManager.GetActiveScene();
-    }
-
-    #endregion
 
     #region Import Tool
     #region Utils
@@ -330,19 +238,47 @@ public class LocationToolsWindow : EditorWindow
 
     private void ImportObjects()
     {
+        if (blueprintFiles.Count == 0 || structuresList.Count == 0)
+        {
+            Debug.LogError("No blueprint selected or no prefabs found.");
+            return;
+        }
+
+        // Get the blueprint name (without extension) for naming
+        string blueprintName = Path.GetFileNameWithoutExtension(blueprintFiles[selectedBlueprintIndex]);
+        string locationName = "MWL_" + blueprintName;
+
+        // Create parent GameObject "MWL_Location1" at (0,0,0)
+        GameObject locationParent = new GameObject(locationName);
+        locationParent.transform.position = Vector3.zero;
+        locationParent.transform.rotation = Quaternion.identity;
+
+        // Add Location component with m_noBuild = false
+        var location = locationParent.AddComponent<Location>();
+        location.m_noBuild = false;
+
+        // Create child "Blueprint" (empty GameObject) - this is the import target
+        GameObject blueprintChild = new GameObject("Blueprint");
+        blueprintChild.transform.SetParent(locationParent.transform);
+        blueprintChild.transform.localPosition = Vector3.zero;
+        blueprintChild.transform.localRotation = Quaternion.identity;
+
+        // Create child for TerrainModifier
+        string terrainName = locationName + "_Terrain1";
+        GameObject terrainChild = new GameObject(terrainName);
+        terrainChild.transform.SetParent(locationParent.transform);
+        terrainChild.transform.localPosition = Vector3.zero;
+        terrainChild.transform.localRotation = Quaternion.identity;
+
+        // Add TerrainModifier component with m_smooth = true, m_square = false
+        var terrainMod = terrainChild.AddComponent<TerrainModifier>();
+        terrainMod.m_smooth = true;
+        terrainMod.m_square = false;
+
+        // Import prefabs as children of the Blueprint object
         int counter = 0;
         Dictionary<string, int> notFound = new Dictionary<string, int>();
 
-        if (importTarget == null)
-        {
-            Debug.LogError("No import target set.");
-            return;
-        }
-        if (blueprintAsset == null)
-        {
-            Debug.LogError("No blueprint set.");
-            return;
-        }
         foreach (BlueprintPrefab blueprintPrefab in structuresList)
         {
             if (blueprintPrefab.prefabName == null)
@@ -355,26 +291,35 @@ public class LocationToolsWindow : EditorWindow
             {
                 Quaternion quat = new Quaternion(blueprintPrefab.rotX, blueprintPrefab.rotY, blueprintPrefab.rotZ, blueprintPrefab.rotW);
 
-                if (maintainPrefabConnections) {
-                    GameObject result = PrefabUtility.InstantiatePrefab(prefab, importTarget.transform) as GameObject;
-                    if (result != null) {
-                        result.transform.position = new Vector3(blueprintPrefab.posX, blueprintPrefab.posY, blueprintPrefab.posZ);
-                        result.transform.rotation = quat;
-                    }
-                } else {
-                    Instantiate(prefab, new Vector3(blueprintPrefab.posX, blueprintPrefab.posY, blueprintPrefab.posZ), quat, importTarget.transform);
+                // Always maintain prefab connections
+                GameObject result = PrefabUtility.InstantiatePrefab(prefab, blueprintChild.transform) as GameObject;
+                if (result != null)
+                {
+                    result.transform.position = new Vector3(blueprintPrefab.posX, blueprintPrefab.posY, blueprintPrefab.posZ);
+                    result.transform.rotation = quat;
                 }
-            } else {
+                counter++;
+            }
+            else
+            {
                 var name = blueprintPrefab.prefabName;
                 if (notFound.ContainsKey(name))
                     notFound[name]++;
                 else
                     notFound[name] = 1;
             }
-            counter++;
         }
 
-        if (notFound.Count > 0) {
+        // Register undo for the created hierarchy
+        Undo.RegisterCreatedObjectUndo(locationParent, "Import Blueprint");
+
+        // Select the created location in the hierarchy
+        Selection.activeGameObject = locationParent;
+
+        Debug.Log($"Imported {counter} objects into {locationName}");
+
+        if (notFound.Count > 0)
+        {
             Debug.LogWarning("Import was unable to find: " + string.Join(", ", notFound.Select(i => i.Value.ToString() + "x " + i.Key)));
         }
     }
@@ -488,71 +433,92 @@ public class LocationToolsWindow : EditorWindow
 
     #region State
 
-    private static string defaultImportPath = "Assets/PrefabInstance/";
-    private ReorderableList importSettingsList = null;
-    
-    private ReorderableList exportSettingsList = null;
-    // private SerializedObject importSettings;
-    private List<string> importSettings = new List<string>() { defaultImportPath };
+    private static string defaultExportPath = "Assets/PrefabInstance/";
+    private List<string> exportSettings = new List<string>() { defaultExportPath };
 
-    private List<string> exportSettings = new List<string>() { defaultImportPath };
-    
     private bool showImports = true;
-    
     private bool showExports = true;
-    private bool showImportSettings = false;
     private bool showExportSettings = false;
-    private TextAsset blueprintAsset;
+
+    // Import tool state - folder-based selection
+    private string blueprintFolder = "";
+    private List<string> blueprintFiles = new List<string>();
+    private int selectedBlueprintIndex = 0;
+
+    // Import parsing state
     private int blueprintPrefabCount = 0;
-    List<string> blueprintsList = new List<string>();
-    List<GameObject> cachedPrefabs = new List<GameObject>();
-    List<BlueprintPrefab> structuresList = new List<BlueprintPrefab>();
-    private bool maintainPrefabConnections = false;
-    private GameObject importTarget;
-    
+    private List<string> blueprintsList = new List<string>();
+    private List<GameObject> cachedPrefabs = new List<GameObject>();
+    private List<BlueprintPrefab> structuresList = new List<BlueprintPrefab>();
+
+    // Export state
     private GameObject exportTarget;
+
+    // Stability tool state
+    private bool showStability = true;
+    private GameObject stabilityTarget;
+    private GameObject groundPlane;
+    private List<GameObject> unstablePieces = new List<GameObject>();
+    private List<GameObject> highlightObjects = new List<GameObject>();
+    private Material highlightMaterial;
+    private string stabilityResultMessage = "";
+    private Vector2 unstablePiecesScrollPos;
+    private bool showUnstableList = true;
 
     #endregion
 
     #region GUI
 
-    private void DoEnableList()
+    private void SelectBlueprintFolder()
     {
-		importSettingsList = new ReorderableList(importSettings, typeof(String), false, false, true, true);
-		importSettingsList.drawElementCallback += importSettingsDrawListItems;
-        importSettingsList.onCanRemoveCallback += importSettingsCanRemoveCallback;
-		// importSettingsList.drawHeaderCallback += importSettingsDrawHeader;
+        string startPath = string.IsNullOrEmpty(blueprintFolder) ? "Assets/" : blueprintFolder;
+        string folder = EditorUtility.OpenFolderPanel("Select Blueprint Folder", startPath, "");
+
+        if (!string.IsNullOrEmpty(folder))
+        {
+            blueprintFolder = folder;
+            blueprintFiles = Directory.GetFiles(blueprintFolder, "*.blueprint")
+                .OrderBy(f => Path.GetFileName(f))
+                .ToList();
+            selectedBlueprintIndex = 0;
+
+            if (blueprintFiles.Count > 0)
+            {
+                LoadSelectedBlueprint();
+            }
+            else
+            {
+                ClearParse();
+            }
+        }
     }
 
-    private void DoDisableList()
+    private void LoadSelectedBlueprint()
     {
-		importSettingsList.drawElementCallback -= importSettingsDrawListItems;
-        importSettingsList.onCanRemoveCallback -= importSettingsCanRemoveCallback;
-		// importSettingsList.drawHeaderCallback -= importSettingsDrawHeader;
+        ClearParse();
+
+        if (blueprintFiles.Count == 0 || selectedBlueprintIndex < 0 || selectedBlueprintIndex >= blueprintFiles.Count)
+            return;
+
+        string filePath = blueprintFiles[selectedBlueprintIndex];
+        if (File.Exists(filePath))
+        {
+            string content = File.ReadAllText(filePath);
+            blueprintsList = new List<string>(content.Split(
+                new string[] { "\r\n", "\r", "\n" },
+                StringSplitOptions.None
+            ));
+            GenerateStructureList();
+        }
     }
 
-    private void importSettingsDrawListItems(Rect rect, int index, bool isActive, bool isFocused)
-	{
-        bool enabled = !defaultImportPath.Equals(importSettings[index]);
-        rect.y += 2;
-        if (index >= 0) {
-            GUI.enabled = enabled;
-            importSettings[index] = EditorGUI.TextField(new Rect(rect.x, rect.y, rect.width, EditorGUIUtility.singleLineHeight), importSettings[index]);
-            GUI.enabled = true;
-        }
-	}
+    private void NavigateBlueprint(int direction)
+    {
+        if (blueprintFiles.Count == 0)
+            return;
 
-    private bool importSettingsCanRemoveCallback(ReorderableList list) {
-        // Debug.Log($"list {list} {list.count} {list.index}");
-        string selection = list.list[list.index] as string;
-
-        if (list.index == 0 && defaultImportPath.Equals(selection)) {
-            return false;
-        }
-        if (list.list.Count > 1) {
-            return true;
-        }
-        return false;
+        selectedBlueprintIndex = Mathf.Clamp(selectedBlueprintIndex + direction, 0, blueprintFiles.Count - 1);
+        LoadSelectedBlueprint();
     }
 
     private void DoImportGUI()
@@ -567,84 +533,77 @@ public class LocationToolsWindow : EditorWindow
             EditorGUILayout.BeginVertical();
             EditorGUILayout.Space();
 
-            // Blueprint file asset
+            // Blueprint Folder selection
             EditorGUILayout.BeginHorizontal();
-            string blueprintLabel = "Blueprint";
-            if (blueprintAsset != null)
+            EditorGUILayout.LabelField("Blueprint Folder", GUILayout.MaxWidth(125f));
+            EditorGUILayout.TextField(blueprintFolder, GUILayout.ExpandWidth(true));
+            if (GUILayout.Button("Select", GUILayout.Width(60f)))
             {
-                blueprintLabel += (blueprintPrefabCount > 0 ? $" ({blueprintPrefabCount} objs)" : "");
+                SelectBlueprintFolder();
             }
-            EditorGUILayout.LabelField(blueprintLabel, GUILayout.MaxWidth(125f));
-            var asset = (TextAsset)EditorGUILayout.ObjectField(blueprintAsset, typeof(TextAsset), true);
             EditorGUILayout.EndHorizontal();
 
-            if (!object.ReferenceEquals(blueprintAsset, asset))
+            // Selected file display and navigation
+            if (blueprintFiles.Count > 0)
             {
-                ClearParse();
-                blueprintAsset = asset;
-                if (blueprintAsset != null && blueprintAsset.text.Length > 0)
+                EditorGUILayout.Space(5);
+                EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField(" ", GUILayout.MaxWidth(125f)); // spacer
+
+                string currentFileName = Path.GetFileName(blueprintFiles[selectedBlueprintIndex]);
+                string displayText = $"{currentFileName} ({selectedBlueprintIndex + 1}/{blueprintFiles.Count})";
+                if (blueprintPrefabCount > 0)
                 {
-                    blueprintsList = blueprintAsset.ToList();
+                    displayText += $" - {blueprintPrefabCount} objs";
                 }
-                GenerateStructureList();
-            }
+                EditorGUILayout.LabelField(displayText);
+                EditorGUILayout.EndHorizontal();
 
-            // Import Target
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField("Import Target", GUILayout.MaxWidth(125f));
-            importTarget = (GameObject)EditorGUILayout.ObjectField(importTarget, typeof(GameObject), true);
-            EditorGUILayout.EndHorizontal();
-            if (blueprintAsset != null && blueprintPrefabCount <= 0)
+                // Navigation buttons
+                EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField(" ", GUILayout.MaxWidth(125f)); // spacer
+                GUI.enabled = selectedBlueprintIndex > 0;
+                if (GUILayout.Button("\u25B2", GUILayout.Width(30f))) // Up arrow
+                {
+                    NavigateBlueprint(-1);
+                }
+                GUI.enabled = selectedBlueprintIndex < blueprintFiles.Count - 1;
+                if (GUILayout.Button("\u25BC", GUILayout.Width(30f))) // Down arrow
+                {
+                    NavigateBlueprint(1);
+                }
+                GUI.enabled = true;
+                GUILayout.FlexibleSpace();
+                EditorGUILayout.EndHorizontal();
+            }
+            else if (!string.IsNullOrEmpty(blueprintFolder))
             {
                 EditorGUILayout.Space();
-                EditorGUILayout.HelpBox("No prefabs found within this text asset.", MessageType.Warning, true);
+                EditorGUILayout.HelpBox("No .blueprint files found in the selected folder.", MessageType.Warning, true);
             }
 
-            // Use PrefabUtility setting
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField(" ", GUILayout.MaxWidth(125f)); // spacer
-            maintainPrefabConnections = EditorGUILayout.ToggleLeft("Maintain prefab connections", maintainPrefabConnections);
-            EditorGUILayout.Space();
-            EditorGUILayout.EndHorizontal();
+            EditorGUILayout.Space(10);
 
-            // Buttons (Import)
+            // Buttons (Import / Reset)
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.Space(2f);
+            GUI.enabled = blueprintFiles.Count > 0 && blueprintPrefabCount > 0;
             if (GUILayout.Button("Import", EditorStyles.miniButtonLeft))
             {
                 ImportObjects();
             }
+            GUI.enabled = true;
             // Buttons (Reset)
             if (GUILayout.Button("Reset", EditorStyles.miniButtonRight))
             {
                 ClearParse();
-                importTarget = (GameObject)EditorGUILayout.ObjectField(null, typeof(GameObject), true);
-                blueprintAsset = (TextAsset)EditorGUILayout.ObjectField(null, typeof(TextAsset), true);
+                blueprintFolder = "";
+                blueprintFiles.Clear();
+                selectedBlueprintIndex = 0;
                 Repaint();
             }
             EditorGUILayout.Space(2f);
             EditorGUILayout.EndHorizontal();
-            EditorGUILayout.Space(10);
-
-            // Import Settings folder and list
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField(" ", GUILayout.MaxWidth(125f)); // spacer
-            showImportSettings = EditorGUILayout.Foldout(showImportSettings, "Import path settings", true);
-
-            if (showImportSettings && importSettings != null && importSettingsList != null)
-            {
-                EditorGUILayout.Space();
-                EditorGUILayout.EndHorizontal();
-
-                EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(" ", GUILayout.MaxWidth(6f)); // spacer
-
-                importSettingsList.DoLayoutList();
-            }
-            EditorGUILayout.LabelField(" ", GUILayout.MaxWidth(6f)); // spacer
-            EditorGUILayout.EndHorizontal();
-
-
 
             EditorGUILayout.Space(18);
             EditorGUILayout.EndVertical();
@@ -701,943 +660,612 @@ public class LocationToolsWindow : EditorWindow
     }
 
     #endregion
-    #endregion
 
-    #region Combiner Tool
+    #region Stability Tool
 
-    #region Utils
+    #region Stability Utils
 
-    private void GetAllMeshFilter()
+    private struct MaterialProps
     {
-        List<MeshFilter> filters = new List<MeshFilter>();
-        Renderer[] renderers = combineSource.GetComponentsInChildren<Renderer>(addHiddenObjects);
-        foreach (Renderer render in renderers)
+        public float maxSupport;
+        public float minSupport;
+        public float verticalLoss;
+        public float horizontalLoss;
+    }
+
+    private MaterialProps GetMaterialProperties(WearNTear.MaterialType material)
+    {
+        switch (material)
         {
-            if (render.enabled)
+            case WearNTear.MaterialType.Wood:
+                return new MaterialProps { maxSupport = 100, minSupport = 10, verticalLoss = 0.125f, horizontalLoss = 0.2f };
+            case WearNTear.MaterialType.HardWood:
+                return new MaterialProps { maxSupport = 140, minSupport = 10, verticalLoss = 0.1f, horizontalLoss = 1f / 6f };
+            case WearNTear.MaterialType.Stone:
+                return new MaterialProps { maxSupport = 1000, minSupport = 100, verticalLoss = 0.125f, horizontalLoss = 1.0f };
+            case WearNTear.MaterialType.Iron:
+                return new MaterialProps { maxSupport = 1500, minSupport = 20, verticalLoss = 1f / 13f, horizontalLoss = 1f / 13f };
+            case WearNTear.MaterialType.Marble:
+                return new MaterialProps { maxSupport = 1500, minSupport = 100, verticalLoss = 0.125f, horizontalLoss = 0.5f };
+            case WearNTear.MaterialType.Ashstone:
+                return new MaterialProps { maxSupport = 2000, minSupport = 100, verticalLoss = 0.1f, horizontalLoss = 1f / 3f };
+            case WearNTear.MaterialType.Ancient:
+                return new MaterialProps { maxSupport = 5000, minSupport = 100, verticalLoss = 1f / 15f, horizontalLoss = 0.25f };
+            default:
+                return new MaterialProps { maxSupport = 100, minSupport = 10, verticalLoss = 0.125f, horizontalLoss = 0.2f };
+        }
+    }
+
+    private void CreateHighlightMaterial()
+    {
+        if (highlightMaterial != null) return;
+
+        highlightMaterial = new Material(Shader.Find("Unlit/Color"));
+        highlightMaterial.color = new Color(1f, 0f, 0f, 0.5f);
+        highlightMaterial.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+        highlightMaterial.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+        highlightMaterial.SetInt("_ZWrite", 0);
+        highlightMaterial.renderQueue = 3000;
+        highlightMaterial.hideFlags = HideFlags.HideAndDontSave;
+    }
+
+    private Bounds CalculateTargetBounds(GameObject target)
+    {
+        Bounds bounds = new Bounds(target.transform.position, Vector3.zero);
+        bool boundsInitialized = false;
+
+        Renderer[] renderers = target.GetComponentsInChildren<Renderer>();
+        foreach (Renderer r in renderers)
+        {
+            if (!boundsInitialized)
             {
-                MeshFilter singleMesh = render.GetComponent<MeshFilter>();
-                if (singleMesh != null)
-                {
-                    filters.Add(singleMesh);
-                }
+                bounds = r.bounds;
+                boundsInitialized = true;
+            }
+            else
+            {
+                bounds.Encapsulate(r.bounds);
             }
         }
 
-        meshFilters = filters.ToArray();
-    }
-
-    public void EnableRenderers(bool e)
-    {
-        for (Int32 i = 0; i < combinedGameOjects.Length && !(combinedGameOjects[i] == null); i++)
+        // Fallback if no renderers
+        if (!boundsInitialized)
         {
-            Renderer component = combinedGameOjects[i].GetComponent<Renderer>();
-            if (component != null)
-            {
-                component.enabled = e;
-            }
+            bounds = new Bounds(target.transform.position, Vector3.one * 10f);
         }
+
+        return bounds;
     }
 
-    private void CreateNewGameObject()
+    private void CreateGroundPlane(Bounds targetBounds)
     {
-        combineTarget = new GameObject();
-        combineTarget.name = "_Combined Mesh [" + base.name + "]";
-        combineTarget.gameObject.AddComponent<MeshFilter>();
-        combineTarget.gameObject.AddComponent<MeshRenderer>();
-    }
-
-
-    // private void CombineMeshesBalrond()
-    // {
-    //     GameObject gameObject = new GameObject();
-    //     gameObject.name = "_Combined Mesh [" + base.name + "]";
-    //     gameObject.gameObject.AddComponent<MeshFilter>();
-    //     gameObject.gameObject.AddComponent<MeshRenderer>();
-    //     MeshFilter[] array = meshFilters;
-    //     combinedGameOjects = new GameObject[array.Length];
-    // }
-
-    public void CombineMeshes()
-    {
-        MeshFilter[] array = meshFilters;
-        ArrayList arrayList = new ArrayList();
-        ArrayList arrayList2 = new ArrayList();
-        combinedGameOjects = new GameObject[array.Length];
-
-        for (Int32 i = 0; i < array.Length; i++)
+        if (groundPlane != null)
         {
-            combinedGameOjects[i] = array[i].gameObject;
-            MeshRenderer component = array[i].GetComponent<MeshRenderer>();
-            array[i].gameObject.GetComponent<Renderer>().enabled = false;
+            DestroyImmediate(groundPlane);
+        }
 
-            if (array[i].sharedMesh == null)
+        // Use a cube instead of a plane - OverlapBox needs volume to detect intersection
+        // A thin plane won't register properly with Physics.OverlapBox
+        groundPlane = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        groundPlane.name = "StabilityCheck_Ground";
+        groundPlane.layer = 15; // Valheim terrain layer
+
+        // Size the ground box to cover entire build with margin
+        float size = Mathf.Max(targetBounds.size.x, targetBounds.size.z) + 20f;
+        float thickness = 2f; // Thick enough for reliable detection
+
+        // Position ground at world y=0 (like Valheim terrain)
+        // Top surface at y=0, extending downward
+        float groundTop = 0f;
+        groundPlane.transform.position = new Vector3(targetBounds.center.x, groundTop - thickness / 2f, targetBounds.center.z);
+        groundPlane.transform.localScale = new Vector3(size, thickness, size);
+
+        // Set material to semi-transparent green for visibility
+        var renderer = groundPlane.GetComponent<MeshRenderer>();
+        if (renderer != null)
+        {
+            Material groundMat = new Material(Shader.Find("Unlit/Color"));
+            groundMat.color = new Color(0.2f, 0.8f, 0.2f, 0.3f);
+            groundMat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+            groundMat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+            groundMat.SetInt("_ZWrite", 0);
+            groundMat.renderQueue = 2999;
+            groundMat.hideFlags = HideFlags.HideAndDontSave;
+            renderer.material = groundMat;
+        }
+
+        // Hide in hierarchy and mark as not saved
+        groundPlane.hideFlags = HideFlags.HideAndDontSave;
+    }
+
+    // Structure to hold collider bound data (mirrors Valheim's WearNTear.BoundData)
+    private struct BoundData
+    {
+        public Vector3 m_pos;
+        public Quaternion m_rot;
+        public Vector3 m_size;
+    }
+
+    private List<BoundData> GetPieceBounds(WearNTear piece)
+    {
+        List<BoundData> bounds = new List<BoundData>();
+        Collider[] colliders = piece.GetComponentsInChildren<Collider>(true);
+
+        foreach (Collider collider in colliders)
+        {
+            if (collider.isTrigger || collider.attachedRigidbody != null)
+                continue;
+
+            BoundData bd = new BoundData();
+            if (collider is BoxCollider box)
             {
-                break;
+                bd.m_rot = box.transform.rotation;
+                bd.m_pos = box.transform.position + box.transform.TransformVector(box.center);
+                bd.m_size = new Vector3(
+                    box.transform.lossyScale.x * box.size.x,
+                    box.transform.lossyScale.y * box.size.y,
+                    box.transform.lossyScale.z * box.size.z
+                );
+            }
+            else
+            {
+                bd.m_rot = Quaternion.identity;
+                bd.m_pos = collider.bounds.center;
+                bd.m_size = collider.bounds.size;
             }
 
-            for (Int32 j = 0; j < array[i].sharedMesh.subMeshCount; j++)
+            // Expand bounds like Valheim does (0.3f tolerance)
+            bd.m_size.x += 0.3f;
+            bd.m_size.y += 0.3f;
+            bd.m_size.z += 0.3f;
+            bd.m_size *= 0.5f; // Half extents for OverlapBox
+
+            bounds.Add(bd);
+        }
+
+        return bounds;
+    }
+
+    private Vector3 GetPieceCOM(WearNTear piece)
+    {
+        // Valheim uses: transform.position + transform.rotation * m_comOffset
+        return piece.transform.position + piece.transform.rotation * piece.m_comOffset;
+    }
+
+    private float CalculatePieceSupport(WearNTear piece, Dictionary<WearNTear, float> supportValues, HashSet<Collider> pieceOwnColliders, Collider groundCollider)
+    {
+        MaterialProps props = GetMaterialProperties(piece.m_materialType);
+
+        // Use all physics layers - named layers like "piece" may not exist in the project
+        // We filter manually by checking WearNTear components and ground collider
+        int rayMask = ~0; // All layers
+
+        // Get all bounds for this piece (all child colliders)
+        List<BoundData> bounds = GetPieceBounds(piece);
+        if (bounds.Count == 0)
+        {
+            // No valid colliders - piece might still be supported if touching ground
+            return 0f;
+        }
+
+        Vector3 com = GetPieceCOM(piece);
+        float bestSupport = 0f;
+        bool touchingGround = false;
+
+        // Manual ground check - Physics.OverlapBox may not detect newly created colliders in Editor
+        // Check if any piece collider intersects with the ground plane bounds
+        if (groundCollider != null)
+        {
+            Bounds groundBounds = groundCollider.bounds;
+
+            // Use actual collider bounds (AABB) for more reliable intersection
+            Collider[] pieceColliders = piece.GetComponentsInChildren<Collider>(true);
+            foreach (Collider col in pieceColliders)
             {
-                if (component == null)
+                if (col.isTrigger || col.attachedRigidbody != null)
+                    continue;
+
+                if (col.bounds.Intersects(groundBounds))
                 {
+                    touchingGround = true;
                     break;
                 }
-                if (j < component.sharedMaterials.Length && j < array[i].sharedMesh.subMeshCount)
+            }
+        }
+
+        // Track support points for two-point angle bonus (Valheim's c_ComMinAngle = 100°)
+        List<Vector3> supportPoints = new List<Vector3>();
+        List<float> supportPointValues = new List<float>();
+
+        // Check each bound for overlapping colliders (mirrors Valheim's UpdateSupport)
+        foreach (BoundData bound in bounds)
+        {
+            Collider[] nearbyColliders = Physics.OverlapBox(bound.m_pos, bound.m_size, bound.m_rot, rayMask);
+
+            foreach (Collider col in nearbyColliders)
+            {
+                // Skip triggers and rigidbodies
+                if (col.isTrigger || col.attachedRigidbody != null)
+                    continue;
+
+                // Skip own colliders
+                if (pieceOwnColliders.Contains(col))
+                    continue;
+
+                // Check if this is the ground plane collider
+                if (groundCollider != null && col == groundCollider)
                 {
-                    Int32 num = Contains(arrayList, component.sharedMaterials[j]);
-                    if (num == -1)
+                    touchingGround = true;
+                    continue;
+                }
+
+                // Check if this collider belongs to a WearNTear we've already processed
+                WearNTear supporterWnt = col.GetComponentInParent<WearNTear>();
+                if (supporterWnt == null || supporterWnt == piece)
+                {
+                    // Non-WearNTear collider that's not terrain = grounded (like static objects)
+                    if (supporterWnt == null)
                     {
-                        arrayList.Add(component.sharedMaterials[j]);
-                        num = arrayList.Count - 1;
+                        return props.maxSupport;
                     }
-                    arrayList2.Add(new ArrayList());
-                    CombineInstance combineInstance = default(CombineInstance);
-                    combineInstance.transform = component.transform.localToWorldMatrix;
-                    combineInstance.mesh = array[i].sharedMesh;
-                    combineInstance.subMeshIndex = j;
-                    (arrayList2[num] as ArrayList).Add(combineInstance);
+                    continue;
                 }
-            }
 
-            DestroyImmediate(array[i].GetComponent<MeshRenderer>());
-            DestroyImmediate(array[i]);
-        }
+                // Skip if supporter doesn't provide support
+                if (!supporterWnt.m_supports)
+                    continue;
 
-        Mesh[] array2 = new Mesh[arrayList.Count];
-        CombineInstance[] array3 = new CombineInstance[arrayList.Count];
+                if (!supportValues.ContainsKey(supporterWnt))
+                    continue;
 
-        for (Int32 k = 0; k < arrayList.Count; k++)
-        {
-            CombineInstance[] combine = (arrayList2[k] as ArrayList).ToArray(typeof(CombineInstance)) as CombineInstance[];
-            array2[k] = new Mesh();
-            array2[k].indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
-            array2[k].CombineMeshes(combine, true, true);
-            array3[k] = default(CombineInstance);
-            array3[k].mesh = array2[k];
-            array3[k].subMeshIndex = 0;
-            array3[k].mesh.name = "MyNewCombinedMesh";
-        }
-        Mesh mesh2 = (combineTarget.GetComponent<MeshFilter>().sharedMesh = new Mesh());
-        mesh2.name = "MyNewCombinedMesh";
-        Mesh mesh3 = mesh2;
-        mesh3.Clear();
-        mesh3.CombineMeshes(array3, false, false);
-        combineTarget.GetComponent<MeshFilter>().sharedMesh = mesh3;
-        Mesh[] array4 = array2;
-        foreach (Mesh obj in array4)
-        {
-            obj.Clear();
-            DestroyImmediate(obj);
-        }
-        MeshRenderer meshRenderer = combineTarget.GetComponent<MeshRenderer>();
-        if (meshRenderer == null)
-        {
-            meshRenderer = combineTarget.AddComponent<MeshRenderer>();
-        }
-        Material[] materials = arrayList.ToArray(typeof(Material)) as Material[];
-        meshRenderer.materials = materials;
-        combined = combineTarget.gameObject;
-        EnableRenderers(false);
+                float supporterSupport = supportValues[supporterWnt];
+                if (supporterSupport <= 0)
+                    continue;
 
-        combineTarget.GetComponent<MeshFilter>().sharedMesh.RecalculateBounds();
-        vCount = (Int32)combineTarget.GetComponent<MeshFilter>().sharedMesh.vertexCount;
-        // if (vCount > 65536)
-        // {
-        //	 Debug.LogWarning("Vertex Count: " + vCount + "- Vertex Count too high, please divide mesh combine into more groups. Max 65536 for each mesh");
-        //	 _canGenerateLightmapUV = false;
-        // }
-        // else
-        // {
-        _canGenerateLightmapUV = true;
-        // }
-        if (setStatic)
-        {
-            combined.isStatic = true;
-        }
+                // Calculate distance using COM (like Valheim)
+                Vector3 supporterCOM = GetPieceCOM(supporterWnt);
+                float distance = Vector3.Distance(com, supporterCOM) + 0.1f;
 
-        Transform[] transforms = combineSource.GetComponentsInChildren<Transform>(true);
-        foreach (Transform tran in transforms)
-        {
-            if (tran != null && tran.gameObject.activeSelf == false)
-            {
-                DestroyImmediate(tran.gameObject);
-            }
-            if (tran != null && tran.GetComponent<Collider>() == null && tran.childCount == 0)
-            {
-                DestroyImmediate(tran.gameObject);
-            }
-        }
-        combined.transform.parent = combineSource.transform;
-    }
-
-    public Int32 Contains(ArrayList l, Material n)
-    {
-        for (Int32 i = 0; i < l.Count; i++)
-        {
-            if (l[i] as Material == n)
-            {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    #endregion
-
-    #region State
-
-    private bool showCombiner = false;
-    GameObject combineSource;
-    GameObject combineTarget = null;
-    MeshFilter[] meshFilters = null;
-    // string meshName = "Combined_Meshes";
-    bool addHiddenObjects = false;
-    public GameObject[] combinedGameOjects;
-    public GameObject combined;
-
-    public bool _canGenerateLightmapUV;
-    public Int32 vCount;
-    public bool generateLightmapUV;
-    public float lightmapScale = 1f;
-    public GameObject copyTarget;
-    public bool destroyOldColliders;
-    public bool keepStructure = true;
-    public Mesh autoOverwrite;
-    public bool setStatic = true;
-
-    #endregion
-
-    #region GUI
-
-    private void DoCombinerGUI()
-    {
-
-        // Toolbar
-        GUILayout.BeginHorizontal(EditorStyles.toolbar);
-        showCombiner = EditorGUILayout.Foldout(showCombiner, "Old Mesh Combine", true, foldoutBoldStyle);
-        GUILayout.EndHorizontal();
-
-        if (showCombiner)
-        {
-            GUILayout.BeginVertical();
-            EditorGUILayout.Space(2);
-
-            EditorGUILayout.LabelField("Set a GameObject to Scan and combine");
-            combineSource = (GameObject)EditorGUILayout.ObjectField(combineSource, typeof(GameObject), true);
-
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.Space(2f);
-            if (GUILayout.Button("Combine", EditorStyles.miniButtonLeft))
-            {
-                GetAllMeshFilter();
-                CreateNewGameObject();
-                CombineMeshes();
-                Repaint();
-            }
-            if (GUILayout.Button("Reset", EditorStyles.miniButtonRight))
-            {
-                combineSource = (GameObject)EditorGUILayout.ObjectField(null, typeof(GameObject), true);
-                Repaint();
-            }
-            EditorGUILayout.Space(2f);
-            EditorGUILayout.EndHorizontal();
-
-            EditorGUILayout.Space(18);
-            GUILayout.EndVertical();
-        }
-
-    }
-
-    #endregion
-
-    #endregion
-
-    #region Selections Tool
-
-    #region Utils
-
-    private void OnSelectionChanged()
-    {
-        selectionChanged = true;
-        string t = "";
-
-        selectionCount = Selection.objects.Length;
-        if (selectionCount > 1)
-        {
-            t = $"{selectionCount} active selections" + System.Environment.NewLine;
-        }
-        else if (selectionCount > 0)
-        {
-            t = $"{selectionCount} active selection" + System.Environment.NewLine;
-        }
-        else
-        {
-            t = "Selections";
-        }
-
-        text = t.Trim();
-        Repaint();
-        // Debug.Log("OnSelectionChanged triggered.");
-    }
-
-    private void OnHierarchyChanged()
-    {
-        RefreshComponentTypes();
-    }
-
-    private void OnSceneChanged(Scene s1, Scene s2)
-    {
-        RefreshComponentTypes();
-    }
-
-    private void RefreshComponentTypes()
-    {
-        if (targetMode == 0)
-        {
-            RefreshComponentTypes<MonoBehaviour>();
-        }
-        else
-        {
-            RefreshComponentTypes<Component>();
-        }
-    }
-
-    private Type GetTypeTargetMode()
-    {
-        if (targetMode == 0)
-        {
-            return typeof(MonoBehaviour);
-        }
-        return typeof(Component);
-    }
-
-    private void RefreshComponentTypes<T>()
-    {
-        RefreshComponentTypes(typeof(T));
-    }
-
-    private void RefreshComponentTypes(Type type)
-    {
-        componentTypes = GetAllComponentTypes(type).Distinct().ToList();
-        componentTypeStrings = componentTypes.Where(t => t != null).Select(t => t.ToString()).OrderBy(s => s).ToArray();
-
-        // used in Strip tool
-        if (componentTypeFlags.Count == componentTypes.Count)
-        {
-            componentTypeFlags = componentTypeStrings
-                .Select((v) => new { Key = v, Value = componentTypeFlags[v] })
-                .ToDictionary(o => o.Key, o => o.Value);
-        }
-        else
-        {
-            componentTypeFlags = componentTypeStrings
-                .Select((v) => new { Key = v, Value = false })
-                .ToDictionary(o => o.Key, o => o.Value);
-        }
-    }
-
-    private IEnumerable<Type> GetAllComponentTypes(Type type)
-    {
-        return GetCurrentScene()
-            .GetRootGameObjects()
-            .SelectMany(go => go.GetComponentsInChildren(type, selectInactive))
-            .Select(c => c?.GetType());
-    }
-
-
-    private void SelectParentComponents(string componentType)
-    {
-        List<GameObject> results = new List<GameObject>();
-        Type selectedType = componentTypes.FirstOrDefault(t => t.ToString() == componentType);
-
-        foreach (var child in Selection.gameObjects)
-        {
-            Component comp = null;
-            GameObject target = child;
-            while (target != null)
-            {
-                target = target.transform?.parent?.gameObject;
-                comp = target?.GetComponent(selectedType);
-                if (comp != null)
+                // Also check distance to supporter's transform position (Valheim uses smaller of the two)
+                float distToTransform = Vector3.Distance(com, supporterWnt.transform.position) + 0.1f;
+                if (distToTransform < distance && !piece.m_forceCorrectCOMCalculation)
                 {
-                    break;
+                    distance = distToTransform;
                 }
-            }
 
-            if (target != null)
-            {
-                results.Add(target);
-            }
-        }
+                // Get supporter's material properties for loss calculation
+                MaterialProps supporterProps = GetMaterialProperties(supporterWnt.m_materialType);
 
-        if (results.Count > 0)
-        {
-            Selection.objects = results.ToArray();
-        }
-        else
-        {
-            Debug.LogError("No game objects found");
-        }
+                // Calculate horizontal loss (baseline)
+                float horizontalSupport = supporterSupport - supporterProps.horizontalLoss * distance * supporterSupport;
+                bestSupport = Mathf.Max(bestSupport, horizontalSupport);
 
-        // Debug.Log($"Selected type {selectedType}, result count {results.Count}");
-    }
-
-    private void SelectAllComponents(string componentType)
-    {
-        // DateTime start = DateTime.Now;
-
-        List<GameObject> results = new List<GameObject>();
-        Type selectedType = componentTypes.Where(t => t != null).FirstOrDefault(t => t.ToString() == componentType);
-
-        // Debug.Log($"Selected type {selectedType}");
-
-        results = GetCurrentScene()
-            .GetRootGameObjects()
-            .SelectMany(go => go.GetComponentsInChildren(selectedType, selectInactive))
-            .Select(c => c.gameObject).ToList();
-
-        // Debug.Log($"EditorSceneManager RootObjects GetComponentsInChildren ran. {DateTime.Now.Subtract(start).Milliseconds}ms");
-
-        if (!selectInactive)
-        {
-            results = results.Where(go => go.activeInHierarchy == true).ToList();
-        }
-
-        // Debug.Log($"Processed inactive. {DateTime.Now.Subtract(start).Milliseconds}ms");
-
-        if (results.Count > 1000)
-        {
-            if (EditorUtility.DisplayDialog(
-                "Confirm Selection",
-                $"Are you sure want to select {results.Count} objects?",
-                "Yes", // OK button
-                "No" // Cancel button
-            ))
-            {
-                Selection.objects = results.ToArray();
-            }
-            else
-            {
-                Debug.LogError("Selection cancelled.");
-            }
-
-        }
-        else if (results.Count > 0)
-        {
-            Selection.objects = results.ToArray();
-        }
-        else
-        {
-            Debug.LogError("No game objects found");
-        }
-        // Debug.Log($"Selection made. {DateTime.Now.Subtract(start).Milliseconds}ms");
-    }
-
-    #endregion
-
-    #region State
-    private bool selectionChanged = false;
-    private bool showSelections = true;
-    private bool selectInactive = true;
-    private string text = "Selections";
-    private int selectionCount = 0;
-    private int targetMode = 0;
-    private List<Type> componentTypes;
-    private string[] componentTypeStrings;
-    private int selectedComponentType = 0;
-    private string selectActionButtonText = "";
-    #endregion
-
-    #region GUI
-    private void DoSelectionGUI()
-    {
-        // Toolbar
-        GUILayout.BeginHorizontal(EditorStyles.toolbar);
-        showSelections = EditorGUILayout.Foldout(showSelections, text, true, foldoutBoldStyle);
-        GUILayout.EndHorizontal();
-
-        if (showSelections)
-        {
-
-            // Selection mode
-            GUILayout.BeginVertical();
-            EditorGUILayout.Space();
-            string[] labels = new string[2] { "MonoBehaviours", "Components" };
-            targetMode = GUILayout.Toolbar(targetMode, labels, "LargeButton");
-            if (GUI.changed)
-            {
-                RefreshComponentTypes();
-                if (selectedComponentType >= componentTypeStrings.Length)
+                // Check if supporter is below us for vertical support
+                Vector3 supportPoint = col.ClosestPoint(com);
+                if (supportPoint.y < com.y + 0.05f)
                 {
-                    selectedComponentType = 0;
-                }
-            }
-
-            selectInactive = EditorGUILayout.ToggleLeft("Select hidden", selectInactive);
-
-            // Component Type to select
-            GUILayout.BeginHorizontal();
-            GUILayout.Space(4);
-            selectedComponentType = EditorGUILayout.Popup(selectedComponentType, componentTypeStrings);
-            GUILayout.Space(4);
-
-            // Select button
-            if (selectionCount > 0)
-                selectActionButtonText = "Select Parents...";
-            else
-                selectActionButtonText = "Select All...";
-            if (GUILayout.Button(selectActionButtonText, GUILayout.Width(135f)))
-            {
-                string name = componentTypeStrings[selectedComponentType];
-                if (selectionCount > 0)
-                {
-                    SelectParentComponents(name);
-                }
-                else
-                {
-                    SelectAllComponents(name);
-                }
-            }
-            GUILayout.Space(2);
-            GUILayout.EndHorizontal();
-
-            // Deselect button
-            if (selectionCount > 0)
-            {
-                GUILayout.BeginHorizontal();
-                GUILayout.FlexibleSpace();
-                if (GUILayout.Button("Deselect All", GUILayout.Width(135f)))
-                {
-                    Selection.activeGameObject = null;
-                }
-                GUILayout.Space(2);
-                GUILayout.EndHorizontal();
-            }
-            EditorGUILayout.Space(18);
-            GUILayout.EndVertical();
-        }
-    }
-    #endregion
-    #endregion
-
-    #region SMC UI Tool
-
-    #region Utils
-
-    public void PerformCombine()
-    {
-        if (smcType != null && smcSource != null && smcComponent != null)
-        {
-            //PrefabUtility.RecordPrefabInstancePropertyModifications(smcSource);
-
-            // invoke SMC methods
-            smcType.GetMethod("CombineMeshes").Invoke(smcComponent, Array.Empty<object>());
-            smcType.GetMethod("EnableRenderers").Invoke(smcComponent, new object[] { true });
-
-            // fetch resulting properties
-            GameObject combined = smcType.GetField("combined").GetValue(smcComponent) as GameObject;
-            string meshName = smcType.GetField("meshName").GetValue(smcComponent) as string;
-            GameObject copyTarget = smcType.GetField("copyTarget").GetValue(smcComponent) as GameObject;
-            //bool keepStructure = (bool)smcType.GetField("keepStructure").GetValue(smcComponent);
-            Mesh autoOverwrite = smcType.GetField("autoOverwrite").GetValue(smcComponent) as Mesh;
-
-            // Save generated mesh as an asset
-            string defaultfilePath = defaultMeshSafePath + "/" + smcSource.name + "." + meshName + ".asset";
-            string filePath = null;
-            
-            var newMeshFilter = combined.GetComponent<MeshFilter>();
-            if (autoOverwrite != null)
-            {
-                filePath = AssetDatabase.GetAssetPath(autoOverwrite);
-                if (filePath != null)
-                {
-                    Debug.Log($"Save Mesh asset, has overwrite and existing asset:  {filePath}");
-                    AssetDatabase.DeleteAsset(filePath);
-                }
-                else
-                {
-                    filePath = defaultfilePath;
-                    Debug.Log($"Save Mesh asset, has overwrite but made new asset:  {filePath}");
-                }
-            } else
-            {
-                filePath = defaultfilePath;
-                Debug.Log($"Save Mesh asset, made new overwrite and new asset:  {filePath}");
-            }
-
-            var target = Instantiate(combined, smcSource.transform.parent);
-
-            if (copyTarget != null)
-            {
-                target.name = copyTarget.name;
-            } else
-            {
-                target.name = target.name.Replace("(Clone)", "");
-            }
-            smcType.GetField("copyTarget").SetValue(smcComponent, target);
-
-
-            AssetDatabase.CreateAsset(newMeshFilter.sharedMesh, filePath);
-            smcType.GetField("autoOverwrite").SetValue(smcComponent, newMeshFilter.sharedMesh);
-            smcType.GetField("combined").SetValue(smcComponent, target);
-            EditorUtility.SetDirty(newMeshFilter);
-            // optionally, save immediately:
-            //AssetDatabase.SaveAssets();
-
-            // is this needed?
-            UnityEngine.Object.DestroyImmediate(combined);
-
-        }
-    }
-
-    public void RefreshSelectedCombineCandidates()
-    {
-        if (smcType != null)
-        {
-            combineCandidates = Selection.gameObjects
-                .SelectMany(go => go.GetComponentsInChildren(smcType, selectInactive))
-                .Select(c => c?.gameObject)
-                .Distinct().ToArray();
-
-            smcSource = Selection.gameObjects
-                .Select(go => go.GetComponent(smcType))
-                .Select(c => c?.gameObject)
-                .FirstOrDefault();
-
-            if (smcSource != null)
-            {
-                smcComponent = smcSource.GetComponent(smcType);
-            } else
-            {
-                smcComponent = null;
-            }
-
-            //Debug.Log($"{combineCandidates.Length} candidates.  {string.Join(" ", combineCandidates.Select(c => c.name))}");
-        }
-        else
-        {
-            combineCandidates = null;
-            //Debug.Log($"type not resolved wtf");
-        }
-    }
-
-    #endregion
-
-    #region State
-
-    private string defaultMeshSafePath = "Assets/Mesh";
-    private bool showSMC = true;
-    private object smcComponent = null;
-    private GameObject smcSource;
-    private GameObject[] combineCandidates;
-    #endregion
-
-    #region GUI
-
-    private void DoSMCUI()
-    {
-        if (componentTypeStrings.Contains("SimpleMeshCombine"))
-        {
-            RefreshSelectedCombineCandidates();
-        }
-
-        // Toolbar
-        GUILayout.BeginHorizontal(EditorStyles.toolbar);
-        showSMC = EditorGUILayout.Foldout(showSMC, "Simple Mesh Combine", true, foldoutBoldStyle);
-        GUILayout.EndHorizontal();
-
-        if (showSMC)
-        {
-            GUILayout.BeginVertical();
-            EditorGUILayout.Space(2);
-
-            var label = "";
-            var isSmcValid = smcSource != null && smcComponent != null;
-            if (!isSmcValid)
-                if (combineCandidates != null && combineCandidates.Length > 0)
-                    label = "Combine candidates";
-                else
-                    label = "Select a valid SMC component";
-
-            EditorGUILayout.LabelField(label);
-            if (combineCandidates != null && combineCandidates.Length > 0) {
-                for (var index = 0; index < combineCandidates.Length; index++)
-                {
-                    combineCandidates[index] = (GameObject)EditorGUILayout.ObjectField(combineCandidates[index], typeof(GameObject), true);
-                }
-            }
-
-            // Group button
-            GUILayout.BeginHorizontal();
-            GUILayout.FlexibleSpace();
-
-            GUI.enabled = isSmcValid;
-            if (GUILayout.Button("Combine", GUILayout.Width(135f)))
-            {
-                PerformCombine();
-                Repaint();
-            }
-            GUI.enabled = true;
-            GUILayout.Space(2);
-            GUILayout.EndHorizontal();
-
-            EditorGUILayout.Space(18);
-            GUILayout.EndVertical();
-        }
-    }
-
-    #endregion
-
-
-    #endregion
-
-
-    #region Strip Tool
-
-    #region Utils
-
-    private int stripComponent(GameObject prefab, Type type)
-    {
-        int counter = 0;
-        // Debug.Log("Found: " + (type != null ? type.Name : "EMPTY"));
-        Component[] components = prefab.GetComponentsInChildren(type, true);
-        foreach (Component component in components)
-        {
-            DestroyImmediate(component);
-            counter++;
-        }
-        return counter;
-    }
-
-    private void stripSelections()
-    {
-        int counter = 0;
-        foreach (var key in componentTypeFlags.Keys)
-        {
-            Type selectedType = componentTypes.FirstOrDefault(t => t.ToString() == key);
-            if (componentTypeFlags[key])
-            {
-                counter = 0;
-                foreach (var go in Selection.gameObjects)
-                {
-                    counter += stripComponent(go, selectedType);
-                }
-                Debug.Log($"Striped {counter} components of type {selectedType}.");
-            }
-        }
-    }
-
-    #endregion
-
-    #region State
-
-    private bool showStrip = true;
-    private Dictionary<string, bool> componentTypeFlags = new Dictionary<string, bool>();
-
-    #endregion
-
-    #region GUI
-
-    private void DoStripGUI()
-    {
-
-        // Toolbar
-        GUILayout.BeginHorizontal(EditorStyles.toolbar);
-        showStrip = EditorGUILayout.Foldout(showStrip, "Strip", true, foldoutBoldStyle);
-        GUILayout.EndHorizontal();
-
-        if (showStrip)
-        {
-            GUILayout.BeginVertical();
-
-            // type toggles
-            var updatedFlags = new Dictionary<string, bool>(componentTypeFlags);
-            foreach (var key in componentTypeFlags.Keys)
-            {
-                updatedFlags[key] = EditorGUILayout.ToggleLeft(key, componentTypeFlags[key]);
-            }
-            componentTypeFlags = updatedFlags;
-
-            // Strip button
-
-            GUILayout.BeginHorizontal();
-            GUILayout.FlexibleSpace();
-            GUI.enabled = selectionCount > 0;
-            if (GUILayout.Button("Strip", GUILayout.Width(135f)))
-            {
-                stripSelections();
-                componentTypeFlags.Clear();
-                RefreshComponentTypes();
-            }
-            GUI.enabled = true;
-            GUILayout.Space(2);
-            GUILayout.EndHorizontal();
-
-
-            EditorGUILayout.Space(18);
-            GUILayout.EndVertical();
-        }
-    }
-
-    #endregion
-
-    #endregion
-
-    #region Group Tool
-
-    #region Utils
-
-    private void GroupObjects()
-    {
-
-        if (Selection.gameObjects?.Length > 0)
-        {
- 
-            var firstObject = Selection.gameObjects[0];
-            var index = firstObject.transform.GetSiblingIndex();
-            var parent = firstObject.transform.parent;
- 
-            var target = new GameObject();
-            target.name = "Group - " + firstObject.name;
- 
-            for (int i = 0; i < Selection.gameObjects.Length; i++)
-            {
-                // Selection.gameObjects[i].transform.parent = gameObject.transform;
-                Undo.SetTransformParent(Selection.gameObjects[i].transform, target.transform, false, "Group objects");
-
-                if (transferComponents)
-                {
-                    foreach (var key in groupComponentTypeFlags.Keys)
+                    Vector3 toSupport = (supportPoint - com).normalized;
+                    if (toSupport.y < 0f)
                     {
-                        var go = Selection.gameObjects[i];
-                        Type selectedType = componentTypes.FirstOrDefault(t => t.ToString() == key);
-                        if (groupComponentTypeFlags[key] && go.HasComponent(selectedType))
+                        // Calculate angle-based interpolation between horizontal and vertical loss
+                        float t = Mathf.Acos(1f - Mathf.Abs(toSupport.y)) / (Mathf.PI / 2f);
+                        float lossRate = Mathf.Lerp(supporterProps.horizontalLoss, supporterProps.verticalLoss, t);
+                        float angledSupport = supporterSupport - lossRate * distance * supporterSupport;
+                        bestSupport = Mathf.Max(bestSupport, angledSupport);
+                    }
+
+                    // Pure vertical support - track for two-point angle bonus
+                    float verticalSupport = supporterSupport - supporterProps.verticalLoss * distance * supporterSupport;
+                    bestSupport = Mathf.Max(bestSupport, verticalSupport);
+
+                    // Store support point for angle calculation
+                    supportPoints.Add(supportPoint);
+                    supportPointValues.Add(verticalSupport);
+                }
+            }
+        }
+
+        // If touching ground, piece is fully supported
+        if (touchingGround)
+        {
+            return props.maxSupport;
+        }
+
+        // Two-point angle support bonus (Valheim's c_ComMinAngle = 100°)
+        // If two support points are >= 100° apart horizontally, use average of their support values
+        if (supportPoints.Count > 1)
+        {
+            for (int i = 0; i < supportPoints.Count - 1; i++)
+            {
+                Vector3 dir1 = supportPoints[i] - com;
+                dir1.y = 0f; // Project to horizontal plane
+
+                for (int j = i + 1; j < supportPoints.Count; j++)
+                {
+                    float avgSupport = (supportPointValues[i] + supportPointValues[j]) * 0.5f;
+
+                    // Only consider if this could improve our support
+                    if (avgSupport > bestSupport)
+                    {
+                        Vector3 dir2 = supportPoints[j] - com;
+                        dir2.y = 0f; // Project to horizontal plane
+
+                        // Check if supports are >= 100° apart
+                        if (Vector3.Angle(dir1, dir2) >= 100f)
                         {
-                            Component comp = go.GetComponent(selectedType);
-                            if (target.HasComponent(selectedType))
-                            {
-                                // Destroy if parent already has component
-                                DestroyImmediate(comp);
-                            }
-                            else
-                            {
-                                // Move if parent doesn't have component
-                                comp.MoveToGameObject(target);
-                            }
+                            bestSupport = avgSupport;
                         }
                     }
                 }
             }
- 
-            if (parent != null)
-            {
-                // gameObject.transform.parent = parent.transform;
-                Undo.SetTransformParent(target.transform, parent.transform, false, "Group objects");
-            }
- 
-            Selection.objects = new [] { target };
-            renameTime = EditorApplication.timeSinceStartup + 0.2d;
-            EditorApplication.update += EngageRenameMode;
         }
+
+        // Cap at this piece's max support
+        return Mathf.Min(bestSupport, props.maxSupport);
     }
 
-    private void RefreshSelectedComponentTypes()
+    private void RunStabilityCheck()
     {
-        if (!transferComponents) return;
-
-        var type = GetTypeTargetMode();
-        var selectedCompTypes = Selection.gameObjects
-            .SelectMany(go => go.GetComponentsInChildren(type, selectInactive))
-            .Select(c => c?.GetType())
-            .Distinct().ToList();
-
-        //Debug.Log($"selectedCompTypes {selectedCompTypes.Count}:  {string.Join(" ", selectedCompTypes)}");
-
-        groupComponentTypeOptions = selectedCompTypes
-            .Where(t => t != null)
-            .Select(t => t.ToString()).OrderBy(s => s).ToArray();
-
-        //Debug.Log($"groupComponentTypeOptions {groupComponentTypeOptions.Count()}:  {string.Join(" ", groupComponentTypeOptions)}");
-
-        if (selectedCompTypes.Count > 0 && groupComponentTypeFlags.Count == selectedCompTypes.Count)
+        if (stabilityTarget == null)
         {
-            groupComponentTypeFlags = groupComponentTypeOptions
-                .Select((v) => new { Key = v, Value = groupComponentTypeFlags.ContainsKey(v) ? groupComponentTypeFlags[v] : false })
-                .ToDictionary(o => o.Key, o => o.Value);
+            stabilityResultMessage = "No target selected.";
+            return;
+        }
+
+        // Clear previous results
+        ClearStabilityVisuals();
+
+        // Calculate bounds and create ground plane
+        Bounds targetBounds = CalculateTargetBounds(stabilityTarget);
+        CreateGroundPlane(targetBounds);
+
+        // CRITICAL: Sync physics transforms so OverlapBox can detect colliders in Editor
+        Physics.SyncTransforms();
+
+        // Find all WearNTear components under target
+        WearNTear[] allPieces = stabilityTarget.GetComponentsInChildren<WearNTear>();
+
+        if (allPieces.Length == 0)
+        {
+            stabilityResultMessage = "No building pieces found (no WearNTear components).";
+            return;
+        }
+
+        // Build a lookup of each piece's colliders (to skip self-collision checks)
+        Dictionary<WearNTear, HashSet<Collider>> pieceColliders = new Dictionary<WearNTear, HashSet<Collider>>();
+        foreach (WearNTear piece in allPieces)
+        {
+            Collider[] colliders = piece.GetComponentsInChildren<Collider>(true);
+            pieceColliders[piece] = new HashSet<Collider>(colliders);
+        }
+
+        // Sort by Y position (bottom to top) for proper support propagation
+        var sortedPieces = allPieces.OrderBy(p => p.transform.position.y).ToList();
+
+        // Get the ground plane's collider for direct comparison
+        Collider groundCollider = groundPlane != null ? groundPlane.GetComponent<Collider>() : null;
+
+        // Calculate support for each piece
+        Dictionary<WearNTear, float> supportValues = new Dictionary<WearNTear, float>();
+        unstablePieces.Clear();
+
+        foreach (WearNTear piece in sortedPieces)
+        {
+            HashSet<Collider> ownColliders = pieceColliders[piece];
+            float support = CalculatePieceSupport(piece, supportValues, ownColliders, groundCollider);
+            supportValues[piece] = support;
+
+            MaterialProps props = GetMaterialProperties(piece.m_materialType);
+
+            // Check if piece would break (support < minSupport)
+            if (support < props.minSupport)
+            {
+                unstablePieces.Add(piece.gameObject);
+            }
+        }
+
+        // Apply visual highlighting
+        if (unstablePieces.Count > 0)
+        {
+            HighlightUnstablePieces();
+            stabilityResultMessage = $"{unstablePieces.Count} unstable piece(s) found (highlighted in red).";
         }
         else
         {
-            groupComponentTypeFlags = groupComponentTypeOptions
-                .Select((v) => new { Key = v, Value = false })
-                .ToDictionary(o => o.Key, o => o.Value);
+            stabilityResultMessage = "All pieces are stable!";
         }
-        //Debug.Log($"groupComponentTypeFlags {groupComponentTypeFlags.Count}");
+    }
+
+    private void HighlightUnstablePieces()
+    {
+        CreateHighlightMaterial();
+
+        foreach (GameObject piece in unstablePieces)
+        {
+            // Find all MeshFilters in this piece (there may be multiple)
+            MeshFilter[] meshFilters = piece.GetComponentsInChildren<MeshFilter>();
+
+            foreach (MeshFilter meshFilter in meshFilters)
+            {
+                if (meshFilter == null || meshFilter.sharedMesh == null)
+                    continue;
+
+                // Parent highlight directly to the mesh's GameObject for correct positioning
+                GameObject highlight = new GameObject("_StabilityHighlight");
+                highlight.hideFlags = HideFlags.HideAndDontSave;
+                highlight.transform.SetParent(meshFilter.transform);
+                highlight.transform.localPosition = Vector3.zero;
+                highlight.transform.localRotation = Quaternion.identity;
+                highlight.transform.localScale = Vector3.one * 1.02f;
+
+                MeshFilter hMeshFilter = highlight.AddComponent<MeshFilter>();
+                hMeshFilter.sharedMesh = meshFilter.sharedMesh;
+
+                MeshRenderer hRenderer = highlight.AddComponent<MeshRenderer>();
+                hRenderer.material = highlightMaterial;
+
+                highlightObjects.Add(highlight);
+            }
+        }
+    }
+
+    private void ClearStabilityVisuals()
+    {
+        // Destroy highlight objects
+        foreach (GameObject highlight in highlightObjects)
+        {
+            if (highlight != null)
+            {
+                DestroyImmediate(highlight);
+            }
+        }
+        highlightObjects.Clear();
+
+        // Destroy ground plane
+        if (groundPlane != null)
+        {
+            DestroyImmediate(groundPlane);
+            groundPlane = null;
+        }
+
+        // Clear unstable pieces list
+        unstablePieces.Clear();
+
+        // Clear result message
+        stabilityResultMessage = "";
     }
 
     #endregion
 
-    #region State
+    #region Stability GUI
 
-    bool transferComponents = false;
-    private Dictionary<string, bool> groupComponentTypeFlags = new Dictionary<string, bool>();
-    private string[] groupComponentTypeOptions;
-    bool showGroup = true;
-    
-    #endregion
-
-    #region GUI
-
-    private void DoGroupGUI()
+    private void DoStabilityGUI()
     {
-
         // Toolbar
         GUILayout.BeginHorizontal(EditorStyles.toolbar);
-        showGroup = EditorGUILayout.Foldout(showGroup, "Group", true, foldoutBoldStyle);
+        showStability = EditorGUILayout.Foldout(showStability, "Stability", true, foldoutBoldStyle);
         GUILayout.EndHorizontal();
 
-        if (showGroup)
+        if (showStability)
         {
-            GUILayout.BeginVertical();
+            EditorGUILayout.BeginVertical();
+            EditorGUILayout.Space();
 
-            if (GUI.changed || selectionChanged)
+            // Auto-select target if null
+            if (stabilityTarget == null)
             {
-                RefreshSelectedComponentTypes();
-            }
-
-            transferComponents = EditorGUILayout.ToggleLeft("Transfer Components to new parent", transferComponents);
-            if (transferComponents)
-            {
-                RefreshSelectedComponentTypes();
-
-                // type toggles
-                var updatedFlags = new Dictionary<string, bool>(groupComponentTypeFlags);
-                foreach (var key in groupComponentTypeFlags.Keys)
+                // Try to find most recent MWL_ location in scene
+                Location[] locations = FindObjectsByType<Location>(FindObjectsSortMode.None);
+                if (locations.Length > 0)
                 {
-                    GUILayout.BeginHorizontal();
-                    GUILayout.Space(20);
-                    updatedFlags[key] = EditorGUILayout.ToggleLeft(key, groupComponentTypeFlags[key]);
-                    GUILayout.EndHorizontal();
+                    stabilityTarget = locations[locations.Length - 1].gameObject;
                 }
-                groupComponentTypeFlags = updatedFlags;
+                else if (Selection.activeGameObject != null)
+                {
+                    stabilityTarget = Selection.activeGameObject;
+                }
             }
 
-            // Group button
-            GUILayout.BeginHorizontal();
-            GUILayout.FlexibleSpace();
-            GUI.enabled = selectionCount > 0;
-            if (GUILayout.Button("Group", GUILayout.Width(135f)))
+            // Target field
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField("Target", GUILayout.MaxWidth(125f));
+            stabilityTarget = (GameObject)EditorGUILayout.ObjectField(stabilityTarget, typeof(GameObject), true);
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.Space(10);
+
+            // Run Stability Check button
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.Space(2f);
+            GUI.enabled = stabilityTarget != null;
+            if (GUILayout.Button("Run Stability Check", EditorStyles.miniButtonLeft))
             {
-                GroupObjects();
+                RunStabilityCheck();
             }
             GUI.enabled = true;
-            GUILayout.Space(2);
-            GUILayout.EndHorizontal();
 
-            GUILayout.EndVertical();
+            // Clear Highlights button
+            if (GUILayout.Button("Clear Highlights", EditorStyles.miniButtonRight))
+            {
+                ClearStabilityVisuals();
+            }
+            EditorGUILayout.Space(2f);
+            EditorGUILayout.EndHorizontal();
+
+            // Results message
+            if (!string.IsNullOrEmpty(stabilityResultMessage))
+            {
+                EditorGUILayout.Space(5);
+                EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField(" ", GUILayout.MaxWidth(125f)); // spacer
+                MessageType msgType = unstablePieces.Count > 0 ? MessageType.Warning : MessageType.Info;
+                EditorGUILayout.HelpBox(stabilityResultMessage, msgType, true);
+                EditorGUILayout.EndHorizontal();
+            }
+
+            // Unstable pieces list
+            if (unstablePieces.Count > 0)
+            {
+                EditorGUILayout.Space(5);
+                EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField(" ", GUILayout.MaxWidth(125f)); // spacer
+                showUnstableList = EditorGUILayout.Foldout(showUnstableList, $"Unstable Pieces ({unstablePieces.Count})", true);
+                EditorGUILayout.EndHorizontal();
+
+                if (showUnstableList)
+                {
+                    EditorGUILayout.BeginHorizontal();
+                    EditorGUILayout.LabelField(" ", GUILayout.MaxWidth(125f)); // spacer
+                    EditorGUILayout.BeginVertical();
+
+                    // Scrollable list with max height
+                    float listHeight = Mathf.Min(unstablePieces.Count * 20f, 150f);
+                    unstablePiecesScrollPos = EditorGUILayout.BeginScrollView(
+                        unstablePiecesScrollPos,
+                        GUILayout.Height(listHeight + 5f)
+                    );
+
+                    for (int i = 0; i < unstablePieces.Count; i++)
+                    {
+                        GameObject piece = unstablePieces[i];
+                        if (piece == null) continue;
+
+                        EditorGUILayout.BeginHorizontal();
+
+                        // Clickable button with piece name
+                        string displayName = piece.name;
+                        if (displayName.Length > 35)
+                        {
+                            displayName = displayName.Substring(0, 32) + "...";
+                        }
+
+                        bool isSelected = Selection.activeGameObject == piece;
+                        GUIStyle buttonStyle = isSelected ? EditorStyles.toolbarButton : EditorStyles.miniButton;
+
+                        if (GUILayout.Button(displayName, buttonStyle))
+                        {
+                            // Select and frame the piece in scene view
+                            Selection.activeGameObject = piece;
+                            SceneView.lastActiveSceneView?.FrameSelected();
+                        }
+
+                        EditorGUILayout.EndHorizontal();
+                    }
+
+                    EditorGUILayout.EndScrollView();
+                    EditorGUILayout.EndVertical();
+                    EditorGUILayout.EndHorizontal();
+                }
+            }
+
+            EditorGUILayout.Space(18);
+            EditorGUILayout.EndVertical();
         }
     }
 
     #endregion
 
+    #endregion
     #endregion
 
     // #region Misc Tools
