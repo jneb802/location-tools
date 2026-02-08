@@ -1,0 +1,56 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3f6fe0a7246a4484f9098dbea39be6bd, type: 3}
+  m_Name: LocationToolsPresets
+  m_EditorClassIdentifier: 
+  lootPrefabs:
+  - {fileID: 1759143333427916, guid: 99fdd43c69e43a247a81a4e29fcae5c5, type: 3}
+  - {fileID: 1979235287654898, guid: fd02d3438e2e4954eaca32a9e9bd65b7, type: 3}
+  - {fileID: 1341785618773830, guid: b046e5d49bdc40d4f8e870793163b1df, type: 3}
+  - {fileID: 1490634835670086, guid: 43cb882456f6d1c48830659a06759f71, type: 3}
+  - {fileID: 1832082287155796, guid: 42ece8d6df7754e4a8e7cf15be167c0f, type: 3}
+  - {fileID: 1891795983261664, guid: d56d6b2d468a6b943a7aca7735561d33, type: 3}
+  - {fileID: 1580688302405584, guid: e724e5f170f1ab64289b14084a11fe84, type: 3}
+  - {fileID: 1247684957746077, guid: c97056423ccaeb6489ac4d3232869097, type: 3}
+  - {fileID: 1355790820246256, guid: dabfa36d3e1d29f41921db6c641704de, type: 3}
+  creatureCategories:
+  - categoryName: Meadows
+    prefabs:
+    - {fileID: 1779736510924940, guid: 7429de5e01ba5bf4ba39dfb0049d92f1, type: 3}
+  - categoryName: Blackforest
+    prefabs:
+    - {fileID: 1317190698276565, guid: 9a5f04239bd7fab43813747056307561, type: 3}
+    - {fileID: 1002438622506423, guid: 322709fa391f8e14fb0e436dd21320f9, type: 3}
+    - {fileID: 1857711645284857, guid: 1eea332fb76af834c9a24d15a846caaa, type: 3}
+    - {fileID: 1139300375108887, guid: 37431db202cd0d940a7d374caa46cf74, type: 3}
+    - {fileID: 1984980128969922, guid: 198cd7d2e12ee144a908adfc458d353d, type: 3}
+  - categoryName: Swamp
+    prefabs:
+    - {fileID: 1006559095460252, guid: b6211a01aa6f93649858bac4c57b4ae0, type: 3}
+    - {fileID: 1611774669389644, guid: 5d85be9ecbbd8474e88f9a00f8cf5e1f, type: 3}
+    - {fileID: 1228249841390532, guid: 9a7fee8fbb4676140a2154710c479941, type: 3}
+    - {fileID: 1790381424605315, guid: 7356575476c213841881b009b015974d, type: 3}
+    - {fileID: 1944950903355227, guid: d8128c5259d1b234cbaa9575926547ed, type: 3}
+    - {fileID: 1382892396828086, guid: e0c47ffbb1af36e41b7e8e80e252644d, type: 3}
+    - {fileID: 1858745762084018, guid: e71ea93ebc32d8948a5855f6677a884b, type: 3}
+    - {fileID: 1622653524728944, guid: 084ca0df1d368d34c9a38b5076399207, type: 3}
+    - {fileID: 1151008752592677, guid: 5c305c7f47b20c241add9358019b11a7, type: 3}
+    - {fileID: 1540827571918561, guid: 13588e964ae5e0c4f8ca0ed839660e20, type: 3}
+  - categoryName: Mountain
+    prefabs:
+    - {fileID: 1076126511665546, guid: 822e452bb91b5c641ae46aa15e58f4e2, type: 3}
+    - {fileID: 1695710151854510, guid: 83d28d4c39cf85a4d9c781cde3d5941f, type: 3}
+    - {fileID: 1201276776081489, guid: b13ef74d7387f5d4291785ce714d8ddc, type: 3}
+    - {fileID: 1258555043531041, guid: 9dce248ddf6daa74eb765606e76f5bd0, type: 3}
+    - {fileID: 1436356375648227, guid: e30df0b4f565d47448afbc05c617f562, type: 3}
+    - {fileID: 1016124397322343, guid: 303bc187cda644040b9b5e8185e334ac, type: 3}
+    - {fileID: 1175877293404940, guid: 2e466f5674311194c9f7c92a83506392, type: 3}

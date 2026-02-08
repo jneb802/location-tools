@@ -117,6 +117,10 @@ public class LocationToolsWindow : EditorWindow
         DoExportGUI();
         EditorGUILayout.Space(1f);
         DoStabilityGUI();
+        EditorGUILayout.Space(1f);
+        DoLootGUI();
+        EditorGUILayout.Space(1f);
+        DoCreaturesGUI();
 
         GUILayout.FlexibleSpace();
         GUILayout.BeginHorizontal();
@@ -465,6 +469,19 @@ public class LocationToolsWindow : EditorWindow
     private Vector2 unstablePiecesScrollPos;
     private bool showUnstableList = true;
 
+    // Presets config
+    [SerializeField]
+    private LocationToolsPresets presetsConfig;
+
+    // Loot Section
+    private bool showLoot = true;
+    private Vector2 lootScrollPos;
+
+    // Creature Section
+    private bool showCreatures = true;
+    private Vector2 creatureScrollPos;
+    private Dictionary<string, bool> creatureCategoryExpanded = new Dictionary<string, bool>();
+
     #endregion
 
     #region GUI
@@ -521,6 +538,39 @@ public class LocationToolsWindow : EditorWindow
         LoadSelectedBlueprint();
     }
 
+    private void ReloadBlueprintFolder()
+    {
+        if (string.IsNullOrEmpty(blueprintFolder) || !Directory.Exists(blueprintFolder))
+            return;
+
+        string currentFile = blueprintFiles.Count > 0 && selectedBlueprintIndex < blueprintFiles.Count
+            ? blueprintFiles[selectedBlueprintIndex]
+            : null;
+
+        blueprintFiles = Directory.GetFiles(blueprintFolder, "*.blueprint")
+            .OrderBy(f => Path.GetFileName(f))
+            .ToList();
+
+        // Try to maintain selection on the same file
+        if (currentFile != null && blueprintFiles.Contains(currentFile))
+        {
+            selectedBlueprintIndex = blueprintFiles.IndexOf(currentFile);
+        }
+        else
+        {
+            selectedBlueprintIndex = Mathf.Clamp(selectedBlueprintIndex, 0, Mathf.Max(0, blueprintFiles.Count - 1));
+        }
+
+        if (blueprintFiles.Count > 0)
+        {
+            LoadSelectedBlueprint();
+        }
+        else
+        {
+            ClearParse();
+        }
+    }
+
     private void DoImportGUI()
     {
         // Toolbar
@@ -573,6 +623,13 @@ public class LocationToolsWindow : EditorWindow
                     NavigateBlueprint(1);
                 }
                 GUI.enabled = true;
+                
+                GUILayout.Space(10f);
+                if (GUILayout.Button("Reload", GUILayout.Width(60f)))
+                {
+                    ReloadBlueprintFolder();
+                }
+                
                 GUILayout.FlexibleSpace();
                 EditorGUILayout.EndHorizontal();
             }
@@ -654,6 +711,154 @@ public class LocationToolsWindow : EditorWindow
             EditorGUILayout.LabelField(" ", GUILayout.MaxWidth(6f)); // spacer
             EditorGUILayout.EndHorizontal();
             
+            EditorGUILayout.Space(18);
+            EditorGUILayout.EndVertical();
+        }
+    }
+
+    private void DrawDraggablePrefabRow(GameObject prefab, Event evt)
+    {
+        if (prefab == null) return;
+
+        Rect rect = EditorGUILayout.BeginHorizontal(GUILayout.Height(20));
+        GUIContent content = EditorGUIUtility.ObjectContent(prefab, typeof(GameObject));
+        GUILayout.Label(content, GUILayout.Height(18));
+        EditorGUILayout.EndHorizontal();
+
+        // Make row draggable
+        if (evt.type == EventType.MouseDown && rect.Contains(evt.mousePosition))
+        {
+            DragAndDrop.PrepareStartDrag();
+            DragAndDrop.objectReferences = new UnityEngine.Object[] { prefab };
+            DragAndDrop.StartDrag(prefab.name);
+            evt.Use();
+        }
+    }
+
+    private void DoLootGUI()
+    {
+        // Toolbar
+        GUILayout.BeginHorizontal(EditorStyles.toolbar);
+        showLoot = EditorGUILayout.Foldout(showLoot, "Loot Presets", true, foldoutBoldStyle);
+        GUILayout.EndHorizontal();
+
+        if (showLoot)
+        {
+            EditorGUILayout.BeginVertical();
+            EditorGUILayout.Space();
+
+            // Config assignment field
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField("Presets Config", GUILayout.MaxWidth(125f));
+            presetsConfig = (LocationToolsPresets)EditorGUILayout.ObjectField(presetsConfig, typeof(LocationToolsPresets), false);
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.Space(5);
+
+            if (presetsConfig == null)
+            {
+                EditorGUILayout.HelpBox("Assign a LocationToolsPresets asset to enable loot presets.", MessageType.Info);
+            }
+            else if (presetsConfig.lootPrefabs.Count == 0)
+            {
+                EditorGUILayout.HelpBox("No loot prefabs configured. Add prefabs in the LocationToolsPresets asset.", MessageType.Info);
+            }
+            else
+            {
+                Event evt = Event.current;
+
+                // Scrollable list with max height
+                float listHeight = Mathf.Min(presetsConfig.lootPrefabs.Count * 22f, 200f);
+                lootScrollPos = EditorGUILayout.BeginScrollView(
+                    lootScrollPos,
+                    GUILayout.Height(listHeight + 5f)
+                );
+
+                foreach (GameObject prefab in presetsConfig.lootPrefabs)
+                {
+                    DrawDraggablePrefabRow(prefab, evt);
+                }
+
+                EditorGUILayout.EndScrollView();
+            }
+
+            EditorGUILayout.Space(18);
+            EditorGUILayout.EndVertical();
+        }
+    }
+
+    private void DoCreaturesGUI()
+    {
+        // Toolbar
+        GUILayout.BeginHorizontal(EditorStyles.toolbar);
+        showCreatures = EditorGUILayout.Foldout(showCreatures, "Creature Presets", true, foldoutBoldStyle);
+        GUILayout.EndHorizontal();
+
+        if (showCreatures)
+        {
+            EditorGUILayout.BeginVertical();
+            EditorGUILayout.Space();
+
+            // Config assignment field (only show if not already shown in Loot section)
+            if (!showLoot)
+            {
+                EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField("Presets Config", GUILayout.MaxWidth(125f));
+                presetsConfig = (LocationToolsPresets)EditorGUILayout.ObjectField(presetsConfig, typeof(LocationToolsPresets), false);
+                EditorGUILayout.EndHorizontal();
+                EditorGUILayout.Space(5);
+            }
+
+            if (presetsConfig == null)
+            {
+                EditorGUILayout.HelpBox("Assign a LocationToolsPresets asset to enable creature presets.", MessageType.Info);
+            }
+            else if (presetsConfig.creatureCategories.Count == 0)
+            {
+                EditorGUILayout.HelpBox("No creature categories configured. Add categories in the LocationToolsPresets asset.", MessageType.Info);
+            }
+            else
+            {
+                Event evt = Event.current;
+
+                // Scrollable list with max height
+                float listHeight = Mathf.Min(presetsConfig.creatureCategories.Count * 50f, 300f);
+                creatureScrollPos = EditorGUILayout.BeginScrollView(
+                    creatureScrollPos,
+                    GUILayout.Height(listHeight + 5f)
+                );
+
+                foreach (var category in presetsConfig.creatureCategories)
+                {
+                    if (string.IsNullOrEmpty(category.categoryName)) continue;
+
+                    // Initialize expanded state if not present
+                    if (!creatureCategoryExpanded.ContainsKey(category.categoryName))
+                    {
+                        creatureCategoryExpanded[category.categoryName] = false;
+                    }
+
+                    // Category foldout
+                    creatureCategoryExpanded[category.categoryName] = EditorGUILayout.Foldout(
+                        creatureCategoryExpanded[category.categoryName],
+                        category.categoryName,
+                        true
+                    );
+
+                    if (creatureCategoryExpanded[category.categoryName])
+                    {
+                        EditorGUI.indentLevel++;
+                        foreach (GameObject prefab in category.prefabs)
+                        {
+                            DrawDraggablePrefabRow(prefab, evt);
+                        }
+                        EditorGUI.indentLevel--;
+                    }
+                }
+
+                EditorGUILayout.EndScrollView();
+            }
+
             EditorGUILayout.Space(18);
             EditorGUILayout.EndVertical();
         }
