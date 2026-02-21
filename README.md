@@ -1,5 +1,3 @@
-**An updated UnityEditor based on Balrond's Location Tools.**
-
 ## Features
 * Installable from Unity Package Manager with *Add from git URL*, `https://github.com/probablykory/location-tools.git`
 * .blueprint and .vbuild are recognized by Unity as TextAssets now, and simply drag the desired blueprint to the import panel.
