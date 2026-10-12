@@ -461,7 +461,9 @@ public class LocationToolsWindow : EditorWindow
     // Stability tool state
     private bool showStability = true;
     private GameObject stabilityTarget;
-    private GameObject groundPlane;
+    [SerializeField] private bool useFlatStabilityGround;
+    [SerializeField] private float stabilityGroundHeight;
+    private bool stabilityCheckIncomplete;
     private List<GameObject> unstablePieces = new List<GameObject>();
     private List<GameObject> highlightObjects = new List<GameObject>();
     private Material highlightMaterial;
@@ -870,41 +872,9 @@ public class LocationToolsWindow : EditorWindow
 
     #region Stability Utils
 
-    private struct MaterialProps
-    {
-        public float maxSupport;
-        public float minSupport;
-        public float verticalLoss;
-        public float horizontalLoss;
-    }
-
-    private MaterialProps GetMaterialProperties(WearNTear.MaterialType material)
-    {
-        switch (material)
-        {
-            case WearNTear.MaterialType.Wood:
-                return new MaterialProps { maxSupport = 100, minSupport = 10, verticalLoss = 0.125f, horizontalLoss = 0.2f };
-            case WearNTear.MaterialType.HardWood:
-                return new MaterialProps { maxSupport = 140, minSupport = 10, verticalLoss = 0.1f, horizontalLoss = 1f / 6f };
-            case WearNTear.MaterialType.Stone:
-                return new MaterialProps { maxSupport = 1000, minSupport = 100, verticalLoss = 0.125f, horizontalLoss = 1.0f };
-            case WearNTear.MaterialType.Iron:
-                return new MaterialProps { maxSupport = 1500, minSupport = 20, verticalLoss = 1f / 13f, horizontalLoss = 1f / 13f };
-            case WearNTear.MaterialType.Marble:
-                return new MaterialProps { maxSupport = 1500, minSupport = 100, verticalLoss = 0.125f, horizontalLoss = 0.5f };
-            case WearNTear.MaterialType.Ashstone:
-                return new MaterialProps { maxSupport = 2000, minSupport = 100, verticalLoss = 0.1f, horizontalLoss = 1f / 3f };
-            case WearNTear.MaterialType.Ancient:
-                return new MaterialProps { maxSupport = 5000, minSupport = 100, verticalLoss = 1f / 15f, horizontalLoss = 0.25f };
-            default:
-                return new MaterialProps { maxSupport = 100, minSupport = 10, verticalLoss = 0.125f, horizontalLoss = 0.2f };
-        }
-    }
-
     private void CreateHighlightMaterial()
     {
         if (highlightMaterial != null) return;
-
         highlightMaterial = new Material(Shader.Find("Unlit/Color"));
         highlightMaterial.color = new Color(1f, 0f, 0f, 0.5f);
         highlightMaterial.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
@@ -914,370 +884,45 @@ public class LocationToolsWindow : EditorWindow
         highlightMaterial.hideFlags = HideFlags.HideAndDontSave;
     }
 
-    private Bounds CalculateTargetBounds(GameObject target)
-    {
-        Bounds bounds = new Bounds(target.transform.position, Vector3.zero);
-        bool boundsInitialized = false;
-
-        Renderer[] renderers = target.GetComponentsInChildren<Renderer>();
-        foreach (Renderer r in renderers)
-        {
-            if (!boundsInitialized)
-            {
-                bounds = r.bounds;
-                boundsInitialized = true;
-            }
-            else
-            {
-                bounds.Encapsulate(r.bounds);
-            }
-        }
-
-        // Fallback if no renderers
-        if (!boundsInitialized)
-        {
-            bounds = new Bounds(target.transform.position, Vector3.one * 10f);
-        }
-
-        return bounds;
-    }
-
-    private void CreateGroundPlane(Bounds targetBounds)
-    {
-        if (groundPlane != null)
-        {
-            DestroyImmediate(groundPlane);
-        }
-
-        // Use a cube instead of a plane - OverlapBox needs volume to detect intersection
-        // A thin plane won't register properly with Physics.OverlapBox
-        groundPlane = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        groundPlane.name = "StabilityCheck_Ground";
-        groundPlane.layer = 15; // Valheim terrain layer
-
-        // Size the ground box to cover entire build with margin
-        float size = Mathf.Max(targetBounds.size.x, targetBounds.size.z) + 20f;
-        float thickness = 2f; // Thick enough for reliable detection
-
-        // Position ground at world y=0 (like Valheim terrain)
-        // Top surface at y=0, extending downward
-        float groundTop = 0f;
-        groundPlane.transform.position = new Vector3(targetBounds.center.x, groundTop - thickness / 2f, targetBounds.center.z);
-        groundPlane.transform.localScale = new Vector3(size, thickness, size);
-
-        // Set material to semi-transparent green for visibility
-        var renderer = groundPlane.GetComponent<MeshRenderer>();
-        if (renderer != null)
-        {
-            Material groundMat = new Material(Shader.Find("Unlit/Color"));
-            groundMat.color = new Color(0.2f, 0.8f, 0.2f, 0.3f);
-            groundMat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-            groundMat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-            groundMat.SetInt("_ZWrite", 0);
-            groundMat.renderQueue = 2999;
-            groundMat.hideFlags = HideFlags.HideAndDontSave;
-            renderer.material = groundMat;
-        }
-
-        // Hide in hierarchy and mark as not saved
-        groundPlane.hideFlags = HideFlags.HideAndDontSave;
-    }
-
-    // Structure to hold collider bound data (mirrors Valheim's WearNTear.BoundData)
-    private struct BoundData
-    {
-        public Vector3 m_pos;
-        public Quaternion m_rot;
-        public Vector3 m_size;
-    }
-
-    private List<BoundData> GetPieceBounds(WearNTear piece)
-    {
-        List<BoundData> bounds = new List<BoundData>();
-        Collider[] colliders = piece.GetComponentsInChildren<Collider>(true);
-
-        foreach (Collider collider in colliders)
-        {
-            if (collider.isTrigger || collider.attachedRigidbody != null)
-                continue;
-
-            BoundData bd = new BoundData();
-            if (collider is BoxCollider box)
-            {
-                bd.m_rot = box.transform.rotation;
-                bd.m_pos = box.transform.position + box.transform.TransformVector(box.center);
-                bd.m_size = new Vector3(
-                    box.transform.lossyScale.x * box.size.x,
-                    box.transform.lossyScale.y * box.size.y,
-                    box.transform.lossyScale.z * box.size.z
-                );
-            }
-            else
-            {
-                bd.m_rot = Quaternion.identity;
-                bd.m_pos = collider.bounds.center;
-                bd.m_size = collider.bounds.size;
-            }
-
-            // Expand bounds like Valheim does (0.3f tolerance)
-            bd.m_size.x += 0.3f;
-            bd.m_size.y += 0.3f;
-            bd.m_size.z += 0.3f;
-            bd.m_size *= 0.5f; // Half extents for OverlapBox
-
-            bounds.Add(bd);
-        }
-
-        return bounds;
-    }
-
-    private Vector3 GetPieceCOM(WearNTear piece)
-    {
-        // Valheim uses: transform.position + transform.rotation * m_comOffset
-        return piece.transform.position + piece.transform.rotation * piece.m_comOffset;
-    }
-
-    private float CalculatePieceSupport(WearNTear piece, Dictionary<WearNTear, float> supportValues, HashSet<Collider> pieceOwnColliders, Collider groundCollider)
-    {
-        MaterialProps props = GetMaterialProperties(piece.m_materialType);
-
-        // Use all physics layers - named layers like "piece" may not exist in the project
-        // We filter manually by checking WearNTear components and ground collider
-        int rayMask = ~0; // All layers
-
-        // Get all bounds for this piece (all child colliders)
-        List<BoundData> bounds = GetPieceBounds(piece);
-        if (bounds.Count == 0)
-        {
-            // No valid colliders - piece might still be supported if touching ground
-            return 0f;
-        }
-
-        Vector3 com = GetPieceCOM(piece);
-        float bestSupport = 0f;
-        bool touchingGround = false;
-
-        // Manual ground check - Physics.OverlapBox may not detect newly created colliders in Editor
-        // Check if any piece collider intersects with the ground plane bounds
-        if (groundCollider != null)
-        {
-            Bounds groundBounds = groundCollider.bounds;
-
-            // Use actual collider bounds (AABB) for more reliable intersection
-            Collider[] pieceColliders = piece.GetComponentsInChildren<Collider>(true);
-            foreach (Collider col in pieceColliders)
-            {
-                if (col.isTrigger || col.attachedRigidbody != null)
-                    continue;
-
-                if (col.bounds.Intersects(groundBounds))
-                {
-                    touchingGround = true;
-                    break;
-                }
-            }
-        }
-
-        // Track support points for two-point angle bonus (Valheim's c_ComMinAngle = 100°)
-        List<Vector3> supportPoints = new List<Vector3>();
-        List<float> supportPointValues = new List<float>();
-
-        // Check each bound for overlapping colliders (mirrors Valheim's UpdateSupport)
-        foreach (BoundData bound in bounds)
-        {
-            Collider[] nearbyColliders = Physics.OverlapBox(bound.m_pos, bound.m_size, bound.m_rot, rayMask);
-
-            foreach (Collider col in nearbyColliders)
-            {
-                // Skip triggers and rigidbodies
-                if (col.isTrigger || col.attachedRigidbody != null)
-                    continue;
-
-                // Skip own colliders
-                if (pieceOwnColliders.Contains(col))
-                    continue;
-
-                // Check if this is the ground plane collider
-                if (groundCollider != null && col == groundCollider)
-                {
-                    touchingGround = true;
-                    continue;
-                }
-
-                // Check if this collider belongs to a WearNTear we've already processed
-                WearNTear supporterWnt = col.GetComponentInParent<WearNTear>();
-                if (supporterWnt == null || supporterWnt == piece)
-                {
-                    // Non-WearNTear collider that's not terrain = grounded (like static objects)
-                    if (supporterWnt == null)
-                    {
-                        return props.maxSupport;
-                    }
-                    continue;
-                }
-
-                // Skip if supporter doesn't provide support
-                if (!supporterWnt.m_supports)
-                    continue;
-
-                if (!supportValues.ContainsKey(supporterWnt))
-                    continue;
-
-                float supporterSupport = supportValues[supporterWnt];
-                if (supporterSupport <= 0)
-                    continue;
-
-                // Calculate distance using COM (like Valheim)
-                Vector3 supporterCOM = GetPieceCOM(supporterWnt);
-                float distance = Vector3.Distance(com, supporterCOM) + 0.1f;
-
-                // Also check distance to supporter's transform position (Valheim uses smaller of the two)
-                float distToTransform = Vector3.Distance(com, supporterWnt.transform.position) + 0.1f;
-                if (distToTransform < distance && !piece.m_forceCorrectCOMCalculation)
-                {
-                    distance = distToTransform;
-                }
-
-                // Get supporter's material properties for loss calculation
-                MaterialProps supporterProps = GetMaterialProperties(supporterWnt.m_materialType);
-
-                // Calculate horizontal loss (baseline)
-                float horizontalSupport = supporterSupport - supporterProps.horizontalLoss * distance * supporterSupport;
-                bestSupport = Mathf.Max(bestSupport, horizontalSupport);
-
-                // Check if supporter is below us for vertical support
-                Vector3 supportPoint = col.ClosestPoint(com);
-                if (supportPoint.y < com.y + 0.05f)
-                {
-                    Vector3 toSupport = (supportPoint - com).normalized;
-                    if (toSupport.y < 0f)
-                    {
-                        // Calculate angle-based interpolation between horizontal and vertical loss
-                        float t = Mathf.Acos(1f - Mathf.Abs(toSupport.y)) / (Mathf.PI / 2f);
-                        float lossRate = Mathf.Lerp(supporterProps.horizontalLoss, supporterProps.verticalLoss, t);
-                        float angledSupport = supporterSupport - lossRate * distance * supporterSupport;
-                        bestSupport = Mathf.Max(bestSupport, angledSupport);
-                    }
-
-                    // Pure vertical support - track for two-point angle bonus
-                    float verticalSupport = supporterSupport - supporterProps.verticalLoss * distance * supporterSupport;
-                    bestSupport = Mathf.Max(bestSupport, verticalSupport);
-
-                    // Store support point for angle calculation
-                    supportPoints.Add(supportPoint);
-                    supportPointValues.Add(verticalSupport);
-                }
-            }
-        }
-
-        // If touching ground, piece is fully supported
-        if (touchingGround)
-        {
-            return props.maxSupport;
-        }
-
-        // Two-point angle support bonus (Valheim's c_ComMinAngle = 100°)
-        // If two support points are >= 100° apart horizontally, use average of their support values
-        if (supportPoints.Count > 1)
-        {
-            for (int i = 0; i < supportPoints.Count - 1; i++)
-            {
-                Vector3 dir1 = supportPoints[i] - com;
-                dir1.y = 0f; // Project to horizontal plane
-
-                for (int j = i + 1; j < supportPoints.Count; j++)
-                {
-                    float avgSupport = (supportPointValues[i] + supportPointValues[j]) * 0.5f;
-
-                    // Only consider if this could improve our support
-                    if (avgSupport > bestSupport)
-                    {
-                        Vector3 dir2 = supportPoints[j] - com;
-                        dir2.y = 0f; // Project to horizontal plane
-
-                        // Check if supports are >= 100° apart
-                        if (Vector3.Angle(dir1, dir2) >= 100f)
-                        {
-                            bestSupport = avgSupport;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Cap at this piece's max support
-        return Mathf.Min(bestSupport, props.maxSupport);
-    }
-
     private void RunStabilityCheck()
     {
+        ClearStabilityVisuals();
         if (stabilityTarget == null)
         {
             stabilityResultMessage = "No target selected.";
             return;
         }
-
-        // Clear previous results
-        ClearStabilityVisuals();
-
-        // Calculate bounds and create ground plane
-        Bounds targetBounds = CalculateTargetBounds(stabilityTarget);
-        CreateGroundPlane(targetBounds);
-
-        // CRITICAL: Sync physics transforms so OverlapBox can detect colliders in Editor
-        Physics.SyncTransforms();
-
-        // Find all WearNTear components under target
-        WearNTear[] allPieces = stabilityTarget.GetComponentsInChildren<WearNTear>();
-
-        if (allPieces.Length == 0)
+        try
         {
-            stabilityResultMessage = "No building pieces found (no WearNTear components).";
-            return;
-        }
-
-        // Build a lookup of each piece's colliders (to skip self-collision checks)
-        Dictionary<WearNTear, HashSet<Collider>> pieceColliders = new Dictionary<WearNTear, HashSet<Collider>>();
-        foreach (WearNTear piece in allPieces)
-        {
-            Collider[] colliders = piece.GetComponentsInChildren<Collider>(true);
-            pieceColliders[piece] = new HashSet<Collider>(colliders);
-        }
-
-        // Sort by Y position (bottom to top) for proper support propagation
-        var sortedPieces = allPieces.OrderBy(p => p.transform.position.y).ToList();
-
-        // Get the ground plane's collider for direct comparison
-        Collider groundCollider = groundPlane != null ? groundPlane.GetComponent<Collider>() : null;
-
-        // Calculate support for each piece
-        Dictionary<WearNTear, float> supportValues = new Dictionary<WearNTear, float>();
-        unstablePieces.Clear();
-
-        foreach (WearNTear piece in sortedPieces)
-        {
-            HashSet<Collider> ownColliders = pieceColliders[piece];
-            float support = CalculatePieceSupport(piece, supportValues, ownColliders, groundCollider);
-            supportValues[piece] = support;
-
-            MaterialProps props = GetMaterialProperties(piece.m_materialType);
-
-            // Check if piece would break (support < minSupport)
-            if (support < props.minSupport)
-            {
+            LocationStability.Result result = LocationStability.Check(stabilityTarget,
+                useFlatStabilityGround ? (float?)stabilityGroundHeight : null,
+                (progress, message) => EditorUtility.DisplayCancelableProgressBar("Location stability", message, progress));
+            foreach (WearNTear piece in result.Failed)
                 unstablePieces.Add(piece.gameObject);
-            }
+            if (unstablePieces.Count > 0) HighlightUnstablePieces();
+            stabilityCheckIncomplete = !result.Complete;
+            string ground = useFlatStabilityGround ? $"Assumed flat ground at world Y={stabilityGroundHeight}." : "Using scene colliders only.";
+            string outcome = result.Complete
+                ? $"{result.Failed.Count} of {result.Support.Count} pieces predicted to fail after support settles."
+                : "Check incomplete.";
+            stabilityResultMessage = $"{outcome} {ground}\n{result.Detail}\n"
+                + $"{result.ExternalPieces} connected pieces outside the target included; {result.ProtectedPieces} target pieces have support wear disabled.";
         }
-
-        // Apply visual highlighting
-        if (unstablePieces.Count > 0)
+        catch (OperationCanceledException)
         {
-            HighlightUnstablePieces();
-            stabilityResultMessage = $"{unstablePieces.Count} unstable piece(s) found (highlighted in red).";
+            stabilityCheckIncomplete = true;
+            stabilityResultMessage = "Check canceled. No stability result is available.";
         }
-        else
+        catch (Exception exception)
         {
-            stabilityResultMessage = "All pieces are stable!";
+            stabilityCheckIncomplete = true;
+            stabilityResultMessage = "Check incomplete: " + exception.Message;
+            Debug.LogException(exception);
+        }
+        finally
+        {
+            EditorUtility.ClearProgressBar();
+            SceneView.RepaintAll();
         }
     }
 
@@ -1326,18 +971,12 @@ public class LocationToolsWindow : EditorWindow
         }
         highlightObjects.Clear();
 
-        // Destroy ground plane
-        if (groundPlane != null)
-        {
-            DestroyImmediate(groundPlane);
-            groundPlane = null;
-        }
-
         // Clear unstable pieces list
         unstablePieces.Clear();
 
         // Clear result message
         stabilityResultMessage = "";
+        stabilityCheckIncomplete = false;
     }
 
     #endregion
@@ -1372,10 +1011,17 @@ public class LocationToolsWindow : EditorWindow
             }
 
             // Target field
+            EditorGUI.BeginChangeCheck();
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField("Target", GUILayout.MaxWidth(125f));
             stabilityTarget = (GameObject)EditorGUILayout.ObjectField(stabilityTarget, typeof(GameObject), true);
             EditorGUILayout.EndHorizontal();
+
+            useFlatStabilityGround = EditorGUILayout.Toggle("Assume flat ground", useFlatStabilityGround);
+            if (useFlatStabilityGround)
+                stabilityGroundHeight = EditorGUILayout.FloatField("Ground world Y", stabilityGroundHeight);
+            if (EditorGUI.EndChangeCheck()) ClearStabilityVisuals();
+            EditorGUILayout.HelpBox("Checks settled support against scene colliders. Enable flat ground only when it matches the location placement. This estimate does not reproduce game update timing or runtime mod changes.", MessageType.Info);
 
             EditorGUILayout.Space(10);
 
@@ -1403,7 +1049,7 @@ public class LocationToolsWindow : EditorWindow
                 EditorGUILayout.Space(5);
                 EditorGUILayout.BeginHorizontal();
                 EditorGUILayout.LabelField(" ", GUILayout.MaxWidth(125f)); // spacer
-                MessageType msgType = unstablePieces.Count > 0 ? MessageType.Warning : MessageType.Info;
+                MessageType msgType = unstablePieces.Count > 0 || stabilityCheckIncomplete ? MessageType.Warning : MessageType.Info;
                 EditorGUILayout.HelpBox(stabilityResultMessage, msgType, true);
                 EditorGUILayout.EndHorizontal();
             }
