@@ -1,4 +1,6 @@
-# Stability regression checks
+# Regression checks
+
+## Stability
 
 Run in a Unity Editor project with Location Tools, Valheim game assemblies, and Unity Pipeline installed:
 
@@ -12,7 +14,7 @@ The checks create a temporary additive scene, invoke the Location Tools check co
 
 Coverage includes hierarchy order, mixed materials, single-side and two-point support, physics layers, optional ground, cancellation cleanup, external support pieces, `m_supports`, `m_noSupportWear`, collapse chains, floating cycles, and non-convex meshes. The mesh case compares its contact point with `FindSupportPoint` in the project's loaded game assembly.
 
-## Model and limits
+### Model and limits
 
 - Material values come from the loaded `WearNTear.GetMaterialProperties`, including materials added by newer game assemblies.
 - Contact queries use the target's physics scene and the game's named layers. Connected pieces outside the target are included. Eligible static colliders provide full support, as in the game.
@@ -22,7 +24,7 @@ Coverage includes hierarchy order, mixed materials, single-side and two-point su
 - Cancellation, invalid setup, and failure to settle produce an incomplete result. They never produce a stable result.
 - This is a settled structural estimate. It does not simulate network ownership, update order and timing, initial health, damage protection, runtime mod patches, random location variants, or terrain changes during world placement. Final location validation still requires the deployed game's environment.
 
-## Validation recorded for this change
+### Validation recorded for this change
 
 Unity 6000.0.46f1, project `valheimRipCombatArms/valheimRipCombat`, using its loaded `Assets/Plugins/assembly_valheim.dll`:
 
@@ -30,3 +32,22 @@ Unity 6000.0.46f1, project `valheimRipCombatArms/valheimRipCombat`, using its lo
 - After: all 18 checks passed, including both hierarchy orders. No new console warnings or errors were captured during the test window.
 - Current `Interior`: 11,971 pieces; 70 calculation passes; 228 predicted failures using scene colliders; approximately 1.4 seconds. This is a diagnostic result, not live-game proof.
 - No production or test-server deployment was performed. The plugin runs in the Editor, and live-game collapse behavior with the production mod set remains unverified.
+
+## Blueprint import
+
+Run in the same kind of project:
+
+```sh
+unity command run_script --project-path /absolute/project/path \
+  --file /absolute/path/to/location-tools/Tests~/BlueprintImportChecks.cs \
+  --entry BlueprintImportChecks.Run --timeout_ms 120000 --json
+```
+
+The checks create temporary prefabs in `Assets/LocationToolsImportChecks`, import a temporary blueprint into the active scene, and revert the import with Undo. They delete the folder and the blueprint in a `finally` block. They import into the active scene because Unity cannot open an additive scene while the active scene is untitled and unsaved.
+
+Coverage:
+
+- Scale columns 10-12 replace the prefab's local scale, as Infinity Hammer does in the game.
+- Rows with no scale columns, or empty ones, keep the prefab's own scale.
+- A missing single column defaults to 1.
+- A prefab whose name matches exactly is used before a model prefab whose name differs only in letter case, such as `model/swamptree1` next to `SwampTree1`.
