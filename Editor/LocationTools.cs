@@ -138,202 +138,22 @@ public class LocationToolsWindow : EditorWindow
     private void ClearParse()
     {
         blueprintPrefabCount = 0;
-        blueprintsList.Clear();
-        cachedPrefabs.Clear();
-        structuresList.Clear();
-    }
-
-    private static float InvariantFloat(string[] row, int index, float defaultValue = 0f)
-    {
-        if (index >= row.Length)
-        {
-            return defaultValue;
-        }
-        string text = row[index];
-        if (string.IsNullOrEmpty(text))
-        {
-            return defaultValue;
-        }
-        return float.Parse(text, System.Globalization.CultureInfo.InvariantCulture);
-    }
-
-	private GameObject FindPrefab(BlueprintPrefab blueprintPrefab)
-    {
-        if (cachedPrefabs.Count > 0)
-        {
-            GameObject foundOne = cachedPrefabs.Find(x => 
-                x != null && 
-                x.name.Equals(blueprintPrefab.prefabName, StringComparison.OrdinalIgnoreCase));
-            if (foundOne != null)
-                return foundOne;
-        }
-
-        string[] guids = AssetDatabase.FindAssets(blueprintPrefab.prefabName + " t:Prefab");
-        foreach (string guid in guids)
-        {
-            string path = AssetDatabase.GUIDToAssetPath(guid);
-
-            //  Skip any prefab under a "_res" folder because these prefabs are just no-material (i.e. white) prefabs
-            //  Exceptions: some _res subfolders contain valid textured prefabs
-            bool isResPath = path.Contains("/_res/", StringComparison.OrdinalIgnoreCase);
-            bool isResException = path.Contains("/Ashlands_Build/", StringComparison.OrdinalIgnoreCase)
-                               || path.Contains("/Charred_Balista/", StringComparison.OrdinalIgnoreCase);
-            if (isResPath && !isResException)
-                continue;
-
-            GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
-
-            if (prefab != null && prefab.name.Equals(blueprintPrefab.prefabName, StringComparison.OrdinalIgnoreCase))
-            {
-                cachedPrefabs.Add(prefab);
-                return prefab;
-            }
-        }
-
-        return null;
-    }
-
-    private void GenerateStructureList()
-    {
-        var prefab = default(BlueprintPrefab);
-
-        // Debug.Log("Detected PlanBuild");
-        foreach (string str in blueprintsList)
-        {
-            if (!string.IsNullOrEmpty(str) && str.IndexOf('#') == -1)
-            {
-                if (str.IndexOf(';') >= 0) {
-                    // .blueprint
-                    prefab = default(BlueprintPrefab);
-                    string[] array = str.Split(';');
-                    if (array.Length >= 9)
-                    {
-                        prefab = new BlueprintPrefab();
-                        prefab.prefabName = array[0];
-                        prefab.type = array[1] != null ? array[1] : "NONE";
-                        prefab.posX = InvariantFloat(array, 2, 0f);
-                        prefab.posY = InvariantFloat(array, 3, 0f);
-                        prefab.posZ = InvariantFloat(array, 4, 0f);;
-                        prefab.rotX = InvariantFloat(array, 5, 0f);
-                        prefab.rotY = InvariantFloat(array, 6, 0f);
-                        prefab.rotZ = InvariantFloat(array, 7, 0f);
-                        prefab.rotW = InvariantFloat(array, 8, 0f);
-                    }
-                } else {
-                    // .vbuild
-                    prefab = default(BlueprintPrefab);
-                    string[] array = str.Split(' ');
-                    if (array.Length >= 8) {
-                        prefab = new BlueprintPrefab();
-                        prefab.prefabName = array[0];
-                        prefab.rotX = InvariantFloat(array, 1, 0f);
-                        prefab.rotY = InvariantFloat(array, 2, 0f);
-                        prefab.rotZ = InvariantFloat(array, 3, 0f);
-                        prefab.rotW = InvariantFloat(array, 4, 0f);
-                        prefab.posX = InvariantFloat(array, 5, 0f);
-                        prefab.posY = InvariantFloat(array, 6, 0f);
-                        prefab.posZ = InvariantFloat(array, 7, 0f);
-                        prefab.type = "NONE";
-                    }
-                }
-                if (!BlueprintPrefab.IsDefault(prefab))
-                {
-                    structuresList.Add(prefab);
-                }
-            }
-        }
-        blueprintPrefabCount = structuresList.Count;
-        // Debug.Log("Amount of objects: " + planBuildPrefabs.Count);
     }
 
     private void ImportObjects()
     {
-        if (blueprintFiles.Count == 0 || structuresList.Count == 0)
-        {
-            Debug.LogError("No blueprint selected or no prefabs found.");
+        if (blueprintFiles.Count == 0)
             return;
-        }
-
-        // Get the blueprint name (without extension) for naming
-        string blueprintName = Path.GetFileNameWithoutExtension(blueprintFiles[selectedBlueprintIndex]);
-        string locationName = "MWL_" + blueprintName;
-
-        // Create parent GameObject "MWL_Location1" at (0,0,0)
-        GameObject locationParent = new GameObject(locationName);
-        locationParent.transform.position = Vector3.zero;
-        locationParent.transform.rotation = Quaternion.identity;
-
-        // Add Location component with m_noBuild = false
-        var location = locationParent.AddComponent<Location>();
-        location.m_noBuild = false;
-
-        // Create child "Blueprint" (empty GameObject) - this is the import target
-        GameObject blueprintChild = new GameObject("Blueprint");
-        blueprintChild.transform.SetParent(locationParent.transform);
-        blueprintChild.transform.localPosition = Vector3.zero;
-        blueprintChild.transform.localRotation = Quaternion.identity;
-
-        // Create child for TerrainModifier
-        string terrainName = locationName + "_Terrain1";
-        GameObject terrainChild = new GameObject(terrainName);
-        terrainChild.transform.SetParent(locationParent.transform);
-        terrainChild.transform.localPosition = Vector3.zero;
-        terrainChild.transform.localRotation = Quaternion.identity;
-
-        // Add TerrainModifier component with m_smooth = true, m_square = false
-        var terrainMod = terrainChild.AddComponent<TerrainModifier>();
-        terrainMod.m_smooth = true;
-        terrainMod.m_square = false;
-
-        // Import prefabs as children of the Blueprint object
-        int counter = 0;
-        Dictionary<string, int> notFound = new Dictionary<string, int>();
-
-        foreach (BlueprintPrefab blueprintPrefab in structuresList)
+        try
         {
-            if (blueprintPrefab.prefabName == null)
-            {
-                continue;
-            }
-
-            GameObject prefab = FindPrefab(blueprintPrefab);
-            if (prefab != null)
-            {
-                Quaternion quat = new Quaternion(blueprintPrefab.rotX, blueprintPrefab.rotY, blueprintPrefab.rotZ, blueprintPrefab.rotW);
-
-                // Always maintain prefab connections
-                GameObject result = PrefabUtility.InstantiatePrefab(prefab, blueprintChild.transform) as GameObject;
-                if (result != null)
-                {
-                    result.transform.position = new Vector3(blueprintPrefab.posX, blueprintPrefab.posY, blueprintPrefab.posZ);
-                    result.transform.rotation = quat;
-                }
-                counter++;
-            }
-            else
-            {
-                var name = blueprintPrefab.prefabName;
-                if (notFound.ContainsKey(name))
-                    notFound[name]++;
-                else
-                    notFound[name] = 1;
-            }
+            LocationToolsApi.ImportBlueprint(blueprintFiles[selectedBlueprintIndex]);
         }
-
-        // Register undo for the created hierarchy
-        Undo.RegisterCreatedObjectUndo(locationParent, "Import Blueprint");
-
-        // Select the created location in the hierarchy
-        Selection.activeGameObject = locationParent;
-
-        Debug.Log($"Imported {counter} objects into {locationName}");
-
-        if (notFound.Count > 0)
+        catch (Exception exception)
         {
-            Debug.LogWarning("Import was unable to find: " + string.Join(", ", notFound.Select(i => i.Value.ToString() + "x " + i.Key)));
+            Debug.LogException(exception);
         }
     }
-    
+
     private void ExportObjects()
     {
         if (exportTarget == null)
@@ -457,9 +277,6 @@ public class LocationToolsWindow : EditorWindow
 
     // Import parsing state
     private int blueprintPrefabCount = 0;
-    private List<string> blueprintsList = new List<string>();
-    private List<GameObject> cachedPrefabs = new List<GameObject>();
-    private List<BlueprintPrefab> structuresList = new List<BlueprintPrefab>();
 
     // Export state
     private GameObject exportTarget;
@@ -531,12 +348,7 @@ public class LocationToolsWindow : EditorWindow
         string filePath = blueprintFiles[selectedBlueprintIndex];
         if (File.Exists(filePath))
         {
-            string content = File.ReadAllText(filePath);
-            blueprintsList = new List<string>(content.Split(
-                new string[] { "\r\n", "\r", "\n" },
-                StringSplitOptions.None
-            ));
-            GenerateStructureList();
+            blueprintPrefabCount = LocationToolsApi.Parse(filePath).Count;
         }
     }
 
