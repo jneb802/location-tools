@@ -108,8 +108,6 @@ public static class LocationToolsApi
 
             // Register undo for the created hierarchy
             Undo.RegisterCreatedObjectUndo(locationParent, "Import Blueprint");
-            Undo.CollapseUndoOperations(undoGroup);
-            Undo.IncrementCurrentGroup();
 
             // Select the created location in the hierarchy
             Selection.activeGameObject = locationParent;
@@ -124,6 +122,8 @@ public static class LocationToolsApi
             UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(scene);
             if (SceneView.lastActiveSceneView != null)
                 SceneView.lastActiveSceneView.FrameSelected();
+            Undo.CollapseUndoOperations(undoGroup);
+            Undo.IncrementCurrentGroup();
             return new BlueprintImportResult
             {
                 rootInstanceId = locationParent.GetInstanceID(),
