@@ -91,12 +91,14 @@ public class LocationToolsWindow : EditorWindow
 
     void OnEnable()
     {
-        // Nothing to initialize currently
+        SceneView.duringSceneGui += OnSceneGUI;
     }
 
     // Called when the instance is destroyed or before a domain reload.
     void OnDisable()
     {
+        SceneView.duringSceneGui -= OnSceneGUI;
+
         // Clean up stability visuals
         ClearStabilityVisuals();
 
@@ -172,7 +174,11 @@ public class LocationToolsWindow : EditorWindow
             string path = AssetDatabase.GUIDToAssetPath(guid);
 
             //  Skip any prefab under a "_res" folder because these prefabs are just no-material (i.e. white) prefabs
-            if (path.Contains("/_res/", StringComparison.OrdinalIgnoreCase))
+            //  Exceptions: some _res subfolders contain valid textured prefabs
+            bool isResPath = path.Contains("/_res/", StringComparison.OrdinalIgnoreCase);
+            bool isResException = path.Contains("/Ashlands_Build/", StringComparison.OrdinalIgnoreCase)
+                               || path.Contains("/Charred_Balista/", StringComparison.OrdinalIgnoreCase);
+            if (isResPath && !isResException)
                 continue;
 
             GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
@@ -484,6 +490,9 @@ public class LocationToolsWindow : EditorWindow
     private Vector2 creatureScrollPos;
     private Dictionary<string, bool> creatureCategoryExpanded = new Dictionary<string, bool>();
 
+    // Drag-and-drop gizmo fix
+    private static bool _isDraggingPreset = false;
+
     #endregion
 
     #region GUI
@@ -536,7 +545,8 @@ public class LocationToolsWindow : EditorWindow
         if (blueprintFiles.Count == 0)
             return;
 
-        selectedBlueprintIndex = Mathf.Clamp(selectedBlueprintIndex + direction, 0, blueprintFiles.Count - 1);
+        int count = blueprintFiles.Count;
+        selectedBlueprintIndex = ((selectedBlueprintIndex + direction) % count + count) % count;
         LoadSelectedBlueprint();
     }
 
@@ -614,17 +624,14 @@ public class LocationToolsWindow : EditorWindow
                 // Navigation buttons
                 EditorGUILayout.BeginHorizontal();
                 EditorGUILayout.LabelField(" ", GUILayout.MaxWidth(125f)); // spacer
-                GUI.enabled = selectedBlueprintIndex > 0;
                 if (GUILayout.Button("\u25B2", GUILayout.Width(30f))) // Up arrow
                 {
                     NavigateBlueprint(-1);
                 }
-                GUI.enabled = selectedBlueprintIndex < blueprintFiles.Count - 1;
                 if (GUILayout.Button("\u25BC", GUILayout.Width(30f))) // Down arrow
                 {
                     NavigateBlueprint(1);
                 }
-                GUI.enabled = true;
                 
                 GUILayout.Space(10f);
                 if (GUILayout.Button("Reload", GUILayout.Width(60f)))
@@ -733,7 +740,34 @@ public class LocationToolsWindow : EditorWindow
             DragAndDrop.PrepareStartDrag();
             DragAndDrop.objectReferences = new UnityEngine.Object[] { prefab };
             DragAndDrop.StartDrag(prefab.name);
+            _isDraggingPreset = true;
             evt.Use();
+        }
+    }
+
+    private void OnSceneGUI(SceneView sceneView)
+    {
+        if (!_isDraggingPreset)
+            return;
+
+        Event evt = Event.current;
+
+        if (evt.type == EventType.DragExited)
+        {
+            _isDraggingPreset = false;
+
+            // Delay one frame so Unity finishes instantiating the prefab
+            EditorApplication.delayCall += () =>
+            {
+                if (Selection.activeGameObject != null)
+                {
+                    // Toggle selection to force Tools.handlePosition recalculation
+                    var current = Selection.activeGameObject;
+                    Selection.activeGameObject = null;
+                    Selection.activeGameObject = current;
+                }
+                SceneView.RepaintAll();
+            };
         }
     }
 

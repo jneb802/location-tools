@@ -17,11 +17,13 @@ MonoBehaviour:
   - {fileID: 1979235287654898, guid: fd02d3438e2e4954eaca32a9e9bd65b7, type: 3}
   - {fileID: 1341785618773830, guid: b046e5d49bdc40d4f8e870793163b1df, type: 3}
   - {fileID: 1490634835670086, guid: 43cb882456f6d1c48830659a06759f71, type: 3}
+  - {fileID: 1034704137811101, guid: 2677989be73a66b449c8d5f7828e43d0, type: 3}
   - {fileID: 1832082287155796, guid: 42ece8d6df7754e4a8e7cf15be167c0f, type: 3}
   - {fileID: 1891795983261664, guid: d56d6b2d468a6b943a7aca7735561d33, type: 3}
   - {fileID: 1580688302405584, guid: e724e5f170f1ab64289b14084a11fe84, type: 3}
   - {fileID: 1247684957746077, guid: c97056423ccaeb6489ac4d3232869097, type: 3}
   - {fileID: 1355790820246256, guid: dabfa36d3e1d29f41921db6c641704de, type: 3}
+  - {fileID: 1569062066817588, guid: 65d65b1bf4ccecf49a1468ffd2ac156c, type: 3}
   creatureCategories:
   - categoryName: Meadows
     prefabs:
@@ -45,6 +47,7 @@ MonoBehaviour:
     - {fileID: 1622653524728944, guid: 084ca0df1d368d34c9a38b5076399207, type: 3}
     - {fileID: 1151008752592677, guid: 5c305c7f47b20c241add9358019b11a7, type: 3}
     - {fileID: 1540827571918561, guid: 13588e964ae5e0c4f8ca0ed839660e20, type: 3}
+    - {fileID: 1987928970182097, guid: 4d37c50bb9ea7664196c0f0067f4d61d, type: 3}
   - categoryName: Mountain
     prefabs:
     - {fileID: 1076126511665546, guid: 822e452bb91b5c641ae46aa15e58f4e2, type: 3}
@@ -54,3 +57,22 @@ MonoBehaviour:
     - {fileID: 1436356375648227, guid: e30df0b4f565d47448afbc05c617f562, type: 3}
     - {fileID: 1016124397322343, guid: 303bc187cda644040b9b5e8185e334ac, type: 3}
     - {fileID: 1175877293404940, guid: 2e466f5674311194c9f7c92a83506392, type: 3}
+  - categoryName: Plains
+    prefabs:
+    - {fileID: 1291429289303485, guid: 6965bf775ce93cb4891b19872855c424, type: 3}
+    - {fileID: 1916927455285924, guid: feb3201d9154a6e47b4af8f0d3ac9963, type: 3}
+    - {fileID: 1524921100087423, guid: 72af186fe9c0ddf4e832a92cb6117847, type: 3}
+    - {fileID: 1836346847613870, guid: 2cd6d7fc76960984786ee5932e5bbbc3, type: 3}
+    - {fileID: 1296006844235427, guid: 269a526c42781ac419bda876f4111143, type: 3}
+    - {fileID: 1296006844235427, guid: 269a526c42781ac419bda876f4111143, type: 3}
+  - categoryName: Mistlands
+    prefabs: []
+  - categoryName: Ashlands
+    prefabs:
+    - {fileID: 1966133281623254, guid: e503d5b55371fb14abbaf24cdbc4bbd5, type: 3}
+    - {fileID: 1203200763219143, guid: c3316d774f18bc44b8e0dcb1fc0be341, type: 3}
+    - {fileID: 1098142418008211, guid: ac5e691e7282b644bb12d034a42aaa95, type: 3}
+    - {fileID: 1621671604555493, guid: ed9f19c1fc4bfaf4e9415d6c7cce9159, type: 3}
+    - {fileID: 1203927056440488, guid: 7c6cc6a5635e2074a83937945f1d4021, type: 3}
+    - {fileID: 1203200763219143, guid: c3316d774f18bc44b8e0dcb1fc0be341, type: 3}
+    - {fileID: 1776509383415632, guid: 983dcbb652698704ba5ef3791cd2db99, type: 3}
