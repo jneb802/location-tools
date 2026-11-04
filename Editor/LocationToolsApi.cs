@@ -34,7 +34,7 @@ public static class LocationToolsApi
         string blueprintName = Path.GetFileNameWithoutExtension(filePath);
         string locationName = "MWL_" + blueprintName;
 
-        List<GameObject> cachedPrefabs = new List<GameObject>();
+        Dictionary<string, GameObject> cachedPrefabs = new Dictionary<string, GameObject>();
 
         // Create parent GameObject "MWL_Location1" at (0,0,0)
         Undo.IncrementCurrentGroup();
@@ -91,6 +91,8 @@ public static class LocationToolsApi
                     {
                         result.transform.position = new Vector3(blueprintPrefab.posX, blueprintPrefab.posY, blueprintPrefab.posZ);
                         result.transform.rotation = quat;
+                        if (blueprintPrefab.hasScale)
+                            result.transform.localScale = new Vector3(blueprintPrefab.scaleX, blueprintPrefab.scaleY, blueprintPrefab.scaleZ);
                     }
                     if (result == null)
                         throw new InvalidOperationException("Could not instantiate prefab: " + blueprintPrefab.prefabName);
@@ -153,17 +155,17 @@ public static class LocationToolsApi
         return float.Parse(text, System.Globalization.CultureInfo.InvariantCulture);
     }
 
-    private static GameObject FindPrefab(BlueprintPrefab blueprintPrefab, List<GameObject> cachedPrefabs)
-    {
-        if (cachedPrefabs.Count > 0)
-        {
-            GameObject foundOne = cachedPrefabs.Find(x =>
-                x != null &&
-                x.name.Equals(blueprintPrefab.prefabName, StringComparison.OrdinalIgnoreCase));
-            if (foundOne != null)
-                return foundOne;
-        }
+    private static bool HasValue(string[] row, int index) =>
+        index < row.Length && !string.IsNullOrWhiteSpace(row[index]);
 
+    // Prefers a prefab whose name matches exactly. Ripped projects can also contain a model prefab whose
+    // name differs only in letter case, such as model/swamptree1 next to SwampTree1.
+    private static GameObject FindPrefab(BlueprintPrefab blueprintPrefab, Dictionary<string, GameObject> cachedPrefabs)
+    {
+        if (cachedPrefabs.TryGetValue(blueprintPrefab.prefabName, out GameObject cached))
+            return cached;
+
+        GameObject caseInsensitiveMatch = null;
         string[] guids = AssetDatabase.FindAssets(blueprintPrefab.prefabName + " t:Prefab");
         foreach (string guid in guids)
         {
@@ -179,14 +181,19 @@ public static class LocationToolsApi
 
             GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
 
-            if (prefab != null && prefab.name.Equals(blueprintPrefab.prefabName, StringComparison.OrdinalIgnoreCase))
+            if (prefab == null)
+                continue;
+            if (prefab.name.Equals(blueprintPrefab.prefabName, StringComparison.Ordinal))
             {
-                cachedPrefabs.Add(prefab);
+                cachedPrefabs[blueprintPrefab.prefabName] = prefab;
                 return prefab;
             }
+            if (caseInsensitiveMatch == null && prefab.name.Equals(blueprintPrefab.prefabName, StringComparison.OrdinalIgnoreCase))
+                caseInsensitiveMatch = prefab;
         }
 
-        return null;
+        cachedPrefabs[blueprintPrefab.prefabName] = caseInsensitiveMatch;
+        return caseInsensitiveMatch;
     }
 
     internal static List<BlueprintPrefab> Parse(string filePath)
@@ -215,6 +222,11 @@ public static class LocationToolsApi
                         prefab.rotY = InvariantFloat(array, 6, 0f);
                         prefab.rotZ = InvariantFloat(array, 7, 0f);
                         prefab.rotW = InvariantFloat(array, 8, 0f);
+                        // Columns 10-12 hold scale. A missing column defaults to 1, as in Infinity Hammer.
+                        prefab.hasScale = HasValue(array, 10) || HasValue(array, 11) || HasValue(array, 12);
+                        prefab.scaleX = InvariantFloat(array, 10, 1f);
+                        prefab.scaleY = InvariantFloat(array, 11, 1f);
+                        prefab.scaleZ = InvariantFloat(array, 12, 1f);
                     }
                 } else {
                     // .vbuild

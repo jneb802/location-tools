@@ -56,6 +56,11 @@ public struct BlueprintPrefab
     public float rotX;
     public float rotY;
     public float rotZ;
+    // True when the row has scale columns. The scale replaces the prefab's local scale, as in the game.
+    public bool hasScale;
+    public float scaleX;
+    public float scaleY;
+    public float scaleZ;
 
     public static bool IsDefault<TValue>(TValue value) =>
         EqualityComparer<TValue>.Default.Equals(value, default(TValue));
